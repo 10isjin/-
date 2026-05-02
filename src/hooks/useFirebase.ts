@@ -16,7 +16,7 @@ import {
   getDocs
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
-import { Run, UserProfile, GlobalStats, UserRole, ClassProfile } from '../types';
+import { Run, UserProfile, GlobalStats, UserRole, ClassProfile, VisitorStats } from '../types';
 
 enum OperationType {
   CREATE = 'create',
@@ -62,6 +62,7 @@ export function useFirebase() {
   const [recentRuns, setRecentRuns] = useState<Run[]>([]);
   const [topRunners, setTopRunners] = useState<UserProfile[]>([]);
   const [topClasses, setTopClasses] = useState<ClassProfile[]>([]);
+  const [visitorStats, setVisitorStats] = useState<VisitorStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -148,6 +149,40 @@ export function useFirebase() {
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'classes'));
     return unsub;
   }, []);
+
+  // Visitor Stats Listener (Admin Only)
+  useEffect(() => {
+    if (!user || user.email !== "yelloboll@goedu.kr") return;
+
+    const visitorDoc = doc(db, 'stats', 'visitors');
+    const unsub = onSnapshot(visitorDoc, (snap) => {
+      if (snap.exists()) {
+        setVisitorStats(snap.data() as VisitorStats);
+      }
+    });
+    return unsub;
+  }, [user]);
+
+  const trackVisit = async () => {
+    const today = new Date().toISOString().split('T')[0];
+    const lastVisit = localStorage.getItem('last_visit_date');
+
+    if (lastVisit === today) return;
+
+    try {
+      const visitorRef = doc(db, 'stats', 'visitors');
+      const dayField = `dailyVisits.${today}`;
+      
+      await setDoc(visitorRef, {
+        totalVisits: increment(1),
+        [dayField]: increment(1)
+      }, { merge: true });
+
+      localStorage.setItem('last_visit_date', today);
+    } catch (err) {
+      console.error("Failed to track visit", err);
+    }
+  };
 
   const getClassMembers = async (classId: string) => {
     try {
@@ -406,8 +441,10 @@ export function useFirebase() {
     recentRuns,
     topRunners,
     topClasses,
+    visitorStats,
     loading,
     getClassMembers,
-    bulkUpdateFromCSV
+    bulkUpdateFromCSV,
+    trackVisit
   };
 }

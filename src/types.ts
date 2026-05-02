@@ -35,6 +35,11 @@ export interface GlobalStats {
   lastUpdated: Timestamp;
 }
 
+export interface VisitorStats {
+  totalVisits: number;
+  dailyVisits: Record<string, number>;
+}
+
 export const CHALLENGE_GOAL = 40075; // Earth's circumference in km
 export const START_DATE = new Date('2026-04-22');
 export const END_DATE = new Date('2026-06-22');

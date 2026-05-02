@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useFirebase } from './hooks/useFirebase';
 import { loginWithGoogle, auth } from './lib/firebase';
 import { signOut } from 'firebase/auth';
@@ -19,8 +19,12 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
-  const { user, profile, globalStats, recentRuns, topRunners, topClasses, loading, getClassMembers } = useFirebase();
+  const { user, profile, globalStats, recentRuns, topRunners, topClasses, loading, getClassMembers, trackVisit } = useFirebase();
   const [isAdminView, setIsAdminView] = useState(false);
+
+  useEffect(() => {
+    trackVisit();
+  }, []);
 
   const isAdmin = user?.email === "yelloboll@goedu.kr";
 
