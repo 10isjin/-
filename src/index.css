@@ -1,0 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Jua&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Gowun Dodum", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Jua", serif;
+  --font-mono: "Jua", monospace;
+  
+  --color-brand-blue: #10b981;
+  --color-brand-green: #059669;
+  --color-earth-deep: #061f14;
+}
+
+@layer base {
+  body {
+    @apply bg-[#F7FBF9] text-slate-900;
+  }
+}
+
+@layer utilities {
+  .text-shadow-glow {
+    text-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
+  }
+  
+  .glass-card {
+    @apply bg-white/70 backdrop-blur-xl border border-emerald-100 shadow-2xl shadow-emerald-500/5;
+  }
+
+  .italic-header {
+    font-family: var(--font-serif);
+    font-weight: 400;
+  }
+  
+  .number-font {
+    font-family: var(--font-mono);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin 30s linear infinite;
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-20px); }
+}

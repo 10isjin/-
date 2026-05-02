@@ -1,0 +1,54 @@
+{
+  "entities": {
+    "Run": {
+      "title": "Run",
+      "description": "An individual running activity record.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The ID of the user who performed the run." },
+        "userName": { "type": "string", "description": "Display name of the runner." },
+        "userRole": { "type": "string", "description": "Role of the runner (student, teacher, parent, resident)." },
+        "distance": { "type": "number", "description": "Distance covered in kilometers." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the run occurred." }
+      },
+      "required": ["userId", "userName", "distance", "timestamp"]
+    },
+    "GlobalStats": {
+      "title": "GlobalStats",
+      "description": "Aggregated statistics for the entire challenge.",
+      "type": "object",
+      "properties": {
+        "totalDistance": { "type": "number", "description": "Sum of all run distances." },
+        "totalParticipants": { "type": "integer", "description": "Number of unique participants." },
+        "lastUpdated": { "type": "string", "format": "date-time", "description": "Last time stats were recalculated." }
+      },
+      "required": ["totalDistance", "totalParticipants", "lastUpdated"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile and cumulative stats.",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "role": { "type": "string" },
+        "totalDistance": { "type": "number" },
+        "runCount": { "type": "integer" }
+      },
+      "required": ["displayName", "role", "totalDistance"]
+    }
+  },
+  "firestore": {
+    "/runs/{runId}": {
+      "schema": "Run",
+      "description": "Individual run records."
+    },
+    "/globalStats/current": {
+      "schema": "GlobalStats",
+      "description": "Singleton for global challenge progress."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and aggregate stats."
+    }
+  }
+}
