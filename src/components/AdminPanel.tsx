@@ -129,6 +129,10 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
               <p className="text-sm text-slate-400">
                 런데이 관리자 페이지에서 내려받은 활동 리포트를 선택하세요.
               </p>
+              <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 bg-amber-50 rounded-full border border-amber-100">
+                <AlertTriangle size={12} className="text-amber-500" />
+                <span className="text-[10px] font-bold text-amber-700">안내: 당일 운동 기록은 런데이 시스템 특성상 다음 날 데이터부터 반영될 수 있습니다.</span>
+              </div>
             </label>
           </div>
 
