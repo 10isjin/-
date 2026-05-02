@@ -38,5 +38,11 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+
+    match /stats/visitors {
+      allow read: if isAdmin();
+      // Allow public creation and updates for tracking (increments)
+      allow create, update: if true;
+    }
   }
 }

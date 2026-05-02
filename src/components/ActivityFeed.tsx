@@ -16,7 +16,7 @@ export default function ActivityFeed({ runs }: ActivityFeedProps) {
           <Activity size={18} className="text-emerald-400" />
           최근 활동
         </h3>
-        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Live Feed</span>
+        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">실시간 현황</span>
       </div>
 
       <div className="p-2">

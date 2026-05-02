@@ -75,7 +75,7 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
                 <div className="flex items-center gap-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
                    <div className="flex items-center gap-1">
                      <Users size={10} />
-                     {cls.participantCount} 러너
+                     {cls.participantCount} 명 참여
                    </div>
                 </div>
               </div>
@@ -137,7 +137,7 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
                   <div className="flex items-center gap-4 mt-2">
                     <div className="flex items-center gap-1.5 text-emerald-100 text-[10px] font-black uppercase tracking-widest">
                       <Users size={12} />
-                      {selectedClass.participantCount} 러너
+                      {selectedClass.participantCount} 명 참여
                     </div>
                     <div className="flex items-center gap-1.5 text-emerald-100 text-[10px] font-black uppercase tracking-widest">
                       <Trophy size={12} />
@@ -172,7 +172,7 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
                           <div>
                             <p className="font-bold text-slate-900">{member.displayName}</p>
                             <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
-                              {member.role === 'student' ? '학생' : member.role === 'teacher' ? '교사' : '러너'}
+                              {member.role === 'student' ? '학생' : member.role === 'teacher' ? '교사' : '일반'}
                             </p>
                           </div>
                         </div>

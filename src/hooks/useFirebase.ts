@@ -36,6 +36,11 @@ interface FirestoreErrorInfo {
     email?: string | null;
     emailVerified?: boolean | null;
     isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
   }
 }
 
@@ -47,6 +52,11 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
       email: auth.currentUser?.email,
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
     },
     operationType,
     path
@@ -78,7 +88,7 @@ export function useFirebase() {
             setProfile(null);
           }
         } catch (e) {
-          console.error("Error fetching profile", e);
+          handleFirestoreError(e, OperationType.GET, `users/${user.uid}`);
         }
       } else {
         setProfile(null);
@@ -159,7 +169,7 @@ export function useFirebase() {
       if (snap.exists()) {
         setVisitorStats(snap.data() as VisitorStats);
       }
-    });
+    }, (err) => handleFirestoreError(err, OperationType.GET, 'stats/visitors'));
     return unsub;
   }, [user]);
 
@@ -180,7 +190,7 @@ export function useFirebase() {
 
       localStorage.setItem('last_visit_date', today);
     } catch (err) {
-      console.error("Failed to track visit", err);
+      handleFirestoreError(err, OperationType.WRITE, 'stats/visitors');
     }
   };
 

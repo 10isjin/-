@@ -35,6 +35,15 @@
         "runCount": { "type": "integer" }
       },
       "required": ["displayName", "role", "totalDistance"]
+    },
+    "VisitorStats": {
+      "title": "VisitorStats",
+      "description": "Tracking visitor counts.",
+      "type": "object",
+      "properties": {
+        "totalVisits": { "type": "number" },
+        "dailyVisits": { "type": "object", "description": "Mapping of YYYY-MM-DD to count." }
+      }
     }
   },
   "firestore": {
@@ -49,6 +58,10 @@
     "/users/{userId}": {
       "schema": "User",
       "description": "User profiles and aggregate stats."
+    },
+    "/stats/visitors": {
+      "schema": "VisitorStats",
+      "description": "Visitor tracking data."
     }
   }
 }
