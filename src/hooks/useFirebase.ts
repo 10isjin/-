@@ -241,16 +241,19 @@ export function useFirebase() {
         const nameKey = keys.find(k => k.includes('이름') || k.toLowerCase().includes('name')) || '';
         const idKey = keys.find(k => k.includes('ID') || k.includes('유저코드') || k.includes('UserId')) || '';
         const roleKey = keys.find(k => k.includes('소속') || k.includes('그룹') || k.includes('Affiliation')) || '';
-        const distKey = keys.find(k => k.includes('거리') || k.toLowerCase().includes('dist')) || '';
+        const distKey = keys.find(k => 
+          k.includes('누적') || k.includes('거리') || k.includes('합계') || 
+          k.toLowerCase().includes('dist') || k.toLowerCase().includes('total')
+        ) || '';
         const countKey = keys.find(k => k.includes('횟수') || k.toLowerCase().includes('count')) || '';
 
         const nickname = (row[nicknameKey] || "").toString().trim();
         const realName = (row[nameKey] || "").toString().trim();
         
-        // Use nickname as the primary display name as requested
+        // Use nickname as the primary display name
         const name = nickname || realName;
 
-        // For fallback IDs, strip everything in parentheses to help group variations of the same name
+        // For fallback IDs, strip everything in parentheses
         const cleanName = name.replace(/\s/g, '').replace(/\(.*\)/, '');
         const idFromRow = (row[idKey] || "").toString().trim();
         const rawId = idFromRow || cleanName;
@@ -261,7 +264,7 @@ export function useFirebase() {
 
         if (!name || !rawId) continue;
 
-        // Role Parsing - Prioritize the '소속' column as requested
+        // Role Parsing
         let role: UserRole = 'resident';
         const roleStr = (roleRaw || "").toString().toLowerCase();
         
@@ -269,34 +272,29 @@ export function useFirebase() {
         else if (roleStr.includes('교') || roleStr.includes('직원') || roleStr.includes('선생')) role = 'teacher';
         else if (roleStr.includes('학부모') || roleStr.includes('가족') || roleStr.includes('부모')) role = 'parent';
         else {
-          // Fallback to name/nickname contents if affiliation is empty
           const fullText = (name + " " + roleStr).toLowerCase();
           if (fullText.includes('학생')) role = 'student';
           else if (fullText.includes('교') || fullText.includes('선생')) role = 'teacher';
           else if (fullText.includes('부모')) role = 'parent';
         }
 
-        // Student ID Extraction from Nickname
-        // Rule: 5 digits, but NOT starting with RUNNER (e.g., RUNNER30801 is NOT a student ID)
-        // Also detect if the nickname itself is a default RUNNER ID (e.g., RUNNER-102)
+        // Student ID & Class Extraction
         const isRunnerDefaultId = /RUNNER[-]?\d+/i.test(nickname);
         let studentId = null;
+        let grade = 0;
+        let classNum = 0;
+
         if (nickname && !isRunnerDefaultId) {
-          // Remove RUNNER IDs first (though we just checked, extra safety)
           const cleanedNickname = nickname.replace(/RUNNER\d+/gi, '');
           const digit5Match = cleanedNickname.match(/([1-3][0-9]{4})/);
           if (digit5Match) {
             studentId = digit5Match[1];
+            grade = parseInt(studentId[0]);
+            classNum = parseInt(studentId.substring(1, 3));
           }
         }
         
-        // Class Parsing logic from name/nickname if studentId wasn't found
-        let grade = 0;
-        let classNum = 0;
-        if (studentId) {
-          grade = parseInt(studentId[0]);
-          classNum = parseInt(studentId.substring(1, 3));
-        } else if (!isRunnerDefaultId) { // Skip extraction if it's a RUNNER default ID
+        if (!grade && !isRunnerDefaultId) {
           const textMatch = name.match(/([1-3])\s*[학년-]\s*([0-9]{1,2})\s*반?/);
           if (textMatch) {
             grade = parseInt(textMatch[1]);
@@ -312,16 +310,12 @@ export function useFirebase() {
         };
 
         let currentClassId = null;
-        // Parents are NOT included in class rankings, even if they have grade/class info
         if (role !== 'parent' && isValidClass(grade, classNum)) {
           currentClassId = `${grade}-${classNum}`;
-          // If a valid class is found, prioritize being a student/teacher
-          if (role === 'resident') {
-            role = 'student';
-          }
+          if (role === 'resident') role = 'student';
         }
 
-        // AGGREGATE USER DATA
+        // AGGREGATE USER DATA (Cumulative logic within this single CSV if multiple rows for same user)
         if (!userUpdates[rawId]) {
           userUpdates[rawId] = {
             displayName: name,
@@ -332,68 +326,36 @@ export function useFirebase() {
             studentId: studentId
           };
         } else {
-          // Prioritize nickname if it appears in any row for this user
-          if (nickname && nickname.length > 0) {
-            userUpdates[rawId].displayName = nickname;
-          } else if (!userUpdates[rawId].displayName && realName) {
-            userUpdates[rawId].displayName = realName;
-          }
-
-          // Prioritize roles: teacher > student > parent > resident
-          const rolePriority: Record<string, number> = { 'teacher': 3, 'student': 2, 'parent': 1, 'resident': 0 };
-          const currentRolePriority = rolePriority[role] ?? 0;
-          const existingRolePriority = rolePriority[userUpdates[rawId].role] ?? 0;
+          if (nickname) userUpdates[rawId].displayName = nickname;
           
-          if (currentRolePriority > existingRolePriority) {
+          const rolePriority: Record<string, number> = { 'teacher': 3, 'student': 2, 'parent': 1, 'resident': 0 };
+          if ((rolePriority[role] ?? 0) > (rolePriority[userUpdates[rawId].role] ?? 0)) {
             userUpdates[rawId].role = role;
           }
           
-          // Preserve classId (only if not parent) or studentId if found in any row
-          if (userUpdates[rawId].role !== 'parent' && !userUpdates[rawId].classId && currentClassId) {
+          if (userUpdates[rawId].role !== 'parent' && !userUpdates[rawId].classId) {
             userUpdates[rawId].classId = currentClassId;
           }
-          
-          if (role === 'parent' || userUpdates[rawId].role === 'parent') {
-             userUpdates[rawId].classId = null; // Forced removal for parents
-          }
-
-          if (!userUpdates[rawId].studentId && studentId) {
-            userUpdates[rawId].studentId = studentId;
-          }
+          if (!userUpdates[rawId].studentId) userUpdates[rawId].studentId = studentId;
         }
         userUpdates[rawId].totalDistance = Number((userUpdates[rawId].totalDistance + dist).toFixed(2));
         userUpdates[rawId].runCount += count;
-
-        // Cumulative Global Stats
-        globalTotalDistance += dist;
-        globalParticipants.add(rawId);
       }
 
-      // WRITE AGGREGATED USERS & UPDATE CLASS TOTALS
+      // 1. UPDATE ALL INDIVIDUAL USERS
       for (const [userId, update] of Object.entries(userUpdates)) {
         let finalDisplayName = update.displayName;
-        
-        // Final Masking for parents/external residents
         if (update.role === 'parent' || (update.role === 'resident' && !update.classId)) {
-          // Identify potential Korean name - prioritizing the start or clearly segmented sequence
-          // We target 2-4 syllable blocks.
           const korNameMatch = finalDisplayName.match(/([가-힣]{2,4})/);
           if (korNameMatch) {
             const korName = korNameMatch[1];
-            // Don't mask common labels like "학부모", "가족" if they are the ONLY Korean part
             if (korName !== '학부모' && korName !== '가족') {
-              const masked = korName.substring(0, korName.length - 1) + 'O';
-              finalDisplayName = finalDisplayName.replace(korName, masked);
-            } else {
-              // If it ONLY has "학부모", look for another block if available? 
-              // Actually, most will be "Name(학부모)". The regex is greedy enough for the first match.
+              finalDisplayName = finalDisplayName.replace(korName, korName.substring(0, korName.length - 1) + 'O');
             }
           }
         }
 
-        // Update User Doc
-        const userRef = doc(db, 'users', userId);
-        await setDoc(userRef, {
+        await setDoc(doc(db, 'users', userId), {
           displayName: finalDisplayName,
           role: update.role,
           totalDistance: update.totalDistance,
@@ -402,38 +364,47 @@ export function useFirebase() {
           studentId: update.studentId || null,
           updatedAt: Timestamp.now()
         }, { merge: true });
-
-        // Update Class Aggregate (Students/Teachers only)
-        if (update.classId && (update.role === 'student' || update.role === 'teacher')) {
-          const cId = update.classId;
-          const [g, c] = cId.split('-').map(Number);
-          
-          if (!classDataMap[cId]) {
-            classDataMap[cId] = { totalDistance: 0, participants: new Set(), grade: g, classNumber: c };
-          }
-          classDataMap[cId].totalDistance = Number((classDataMap[cId].totalDistance + update.totalDistance).toFixed(2));
-          classDataMap[cId].participants.add(userId);
-        }
       }
 
-      // Write Aggregated Classes
-      for (const [classId, stats] of Object.entries(classDataMap)) {
-        const classRef = doc(db, 'classes', classId);
-        await setDoc(classRef, {
+      // 2. FULL RECALCULATION: Fetch all users from DB and rebuild Classes & Global Stats
+      // This is the "Source of Truth" sync.
+      const allUsersSnap = await getDocs(collection(db, 'users'));
+      const newClassAggregates: Record<string, { dist: number, participants: Set<string>, g: number, c: number }> = {};
+      let totalDistanceSum = 0;
+      let totalParticipantsCount = 0;
+
+      allUsersSnap.forEach(uDoc => {
+        const u = uDoc.data();
+        const d = u.totalDistance || 0;
+        totalDistanceSum += d;
+        totalParticipantsCount++;
+
+        if (u.classId && (u.role === 'student' || u.role === 'teacher')) {
+          if (!newClassAggregates[u.classId]) {
+            const [g, c] = u.classId.split('-').map(Number);
+            newClassAggregates[u.classId] = { dist: 0, participants: new Set(), g, c };
+          }
+          newClassAggregates[u.classId].dist += d;
+          newClassAggregates[u.classId].participants.add(uDoc.id);
+        }
+      });
+
+      // 3. WRITE UPDATED CLASS STATS
+      for (const [classId, stats] of Object.entries(newClassAggregates)) {
+        await setDoc(doc(db, 'classes', classId), {
           id: classId,
-          grade: stats.grade,
-          classNumber: stats.classNumber,
-          totalDistance: stats.totalDistance,
+          grade: stats.g,
+          classNumber: stats.c,
+          totalDistance: Number(stats.dist.toFixed(2)),
           participantCount: stats.participants.size,
           updatedAt: Timestamp.now()
         });
       }
 
-      // Global Stats
-      const statsRef = doc(db, 'globalStats', 'current');
-      await setDoc(statsRef, {
-        totalDistance: globalTotalDistance,
-        totalParticipants: globalParticipants.size,
+      // 4. WRITE FINAL GLOBAL STATS
+      await setDoc(doc(db, 'globalStats', 'current'), {
+        totalDistance: Number(totalDistanceSum.toFixed(2)),
+        totalParticipants: totalParticipantsCount,
         lastUpdated: Timestamp.now()
       });
       
