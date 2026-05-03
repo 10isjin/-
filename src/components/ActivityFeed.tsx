@@ -35,10 +35,9 @@ export default function ActivityFeed({ runs }: ActivityFeedProps) {
                   <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400 group-hover:text-emerald-500 transition-colors">
                     <Activity size={18} />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-900">{run.userName}</span>
-                    </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-slate-900 leading-tight">{run.userName}</p>
+                  </div>
                     <div className="flex items-center gap-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
                       <div className="flex items-center gap-1">
                         <Clock size={10} />

@@ -61,7 +61,7 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
               
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className={`font-black text-lg italic-header truncate ${
+                  <span className={`font-black text-lg italic-header ${
                     index === 0 ? 'text-yellow-700' : 'text-slate-900'
                   }`}>
                     {cls.grade}학년 {cls.classNumber}반
@@ -169,8 +169,8 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
                       <div key={member.id} className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 hover:bg-emerald-50 transition-colors group">
                         <div className="flex items-center gap-4">
                           <span className="w-6 text-[10px] font-black text-slate-300 group-hover:text-emerald-400">{idx + 1}</span>
-                          <div>
-                            <p className="font-bold text-slate-900">{member.displayName}</p>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-slate-900 leading-tight">{member.displayName}</p>
                             <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
                               {member.role === 'student' ? '학생' : member.role === 'teacher' ? '교사' : '일반'}
                             </p>

@@ -75,24 +75,26 @@ export default function Leaderboard({ runners }: LeaderboardProps) {
                 </div>
                 
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className={`font-bold truncate ${overallRank === 1 ? 'text-yellow-700' : 'text-slate-900'}`}>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span className={`font-bold leading-tight ${overallRank === 1 ? 'text-yellow-700' : 'text-slate-900'}`}>
                       {runner.displayName}
                     </span>
-                    {runner.studentId ? (
-                      <span className="text-[10px] font-black text-blue-400 shrink-0">
-                        ({runner.studentId})
-                      </span>
-                    ) : runner.classId ? (
-                      <span className="text-[10px] font-black text-emerald-400 shrink-0">
-                        ({runner.classId.replace('-', '학년 ')}반)
-                      </span>
-                    ) : null}
-                    {isTop3 && <Trophy size={12} className={
-                      overallRank === 1 ? 'text-yellow-500' : 
-                      overallRank === 2 ? 'text-slate-400' : 
-                      'text-orange-500'
-                    } />}
+                    <div className="flex items-center gap-1">
+                      {runner.studentId ? (
+                        <span className="text-[10px] font-black text-blue-400 shrink-0">
+                          ({runner.studentId})
+                        </span>
+                      ) : runner.classId ? (
+                        <span className="text-[10px] font-black text-emerald-400 shrink-0">
+                          ({runner.classId.replace('-', '학년 ')}반)
+                        </span>
+                      ) : null}
+                      {isTop3 && <Trophy size={12} className={
+                        overallRank === 1 ? 'text-yellow-500' : 
+                        overallRank === 2 ? 'text-slate-400' : 
+                        'text-orange-500'
+                      } />}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest ${
