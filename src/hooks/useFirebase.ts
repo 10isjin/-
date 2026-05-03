@@ -214,26 +214,32 @@ export function useFirebase() {
   const bulkUpdateFromCSV = async (data: any[]) => {
     if (!user || user.email !== "yelloboll@goedu.kr") throw new Error("Unauthorized");
     
-    const userUpdates: Record<string, { 
-      displayName: string, 
-      role: UserRole, 
-      totalDistance: number, 
-      runCount: number,
-      classId: string | null,
-      studentId: string | null
-    }> = {};
-
-    const classDataMap: Record<string, { 
-      totalDistance: number, 
-      participants: Set<string>, 
-      grade: number, 
-      classNumber: number 
-    }> = {};
-
-    let globalTotalDistance = 0;
-    const globalParticipants = new Set<string>();
-
     try {
+      // 0. PRE-UPDATE: Calculate current ranks from existing Firestore data to preserve as "previousRank"
+      const existingUsersSnap = await getDocs(collection(db, 'users'));
+      const existingClassesSnap = await getDocs(collection(db, 'classes'));
+
+      const existingUsers = existingUsersSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      const existingClasses = existingClassesSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+
+      const sortedExistingUsers = [...existingUsers].sort((a, b) => (b.totalDistance || 0) - (a.totalDistance || 0));
+      const sortedExistingClasses = [...existingClasses].sort((a, b) => (b.totalDistance || 0) - (a.totalDistance || 0));
+
+      const userRankMap: Record<string, number> = {};
+      sortedExistingUsers.forEach((u, i) => { userRankMap[u.id] = i + 1; });
+
+      const classRankMap: Record<string, number> = {};
+      sortedExistingClasses.forEach((c, i) => { classRankMap[c.id] = i + 1; });
+
+      const userUpdates: Record<string, { 
+        displayName: string, 
+        role: UserRole, 
+        totalDistance: number, 
+        runCount: number,
+        classId: string | null,
+        studentId: string | null
+      }> = {};
+
       for (const row of data) {
         // Robust column detection
         const keys = Object.keys(row);
@@ -362,6 +368,7 @@ export function useFirebase() {
           runCount: update.runCount,
           classId: update.classId || null,
           studentId: update.studentId || null,
+          previousRank: userRankMap[userId] || null,
           updatedAt: Timestamp.now()
         }, { merge: true });
       }
@@ -397,6 +404,7 @@ export function useFirebase() {
           classNumber: stats.c,
           totalDistance: Number(stats.dist.toFixed(2)),
           participantCount: stats.participants.size,
+          previousRank: classRankMap[classId] || null,
           updatedAt: Timestamp.now()
         });
       }

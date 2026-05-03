@@ -1,11 +1,19 @@
 import { useState, useMemo } from 'react';
 import { UserProfile } from '../types';
-import { Trophy, User as UserIcon, ChevronDown, ChevronUp, Search, Hash } from 'lucide-react';
+import { Trophy, User as UserIcon, ChevronDown, ChevronUp, Search, Hash, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface LeaderboardProps {
   runners: UserProfile[];
 }
+
+const RankChange = ({ current, previous }: { current: number, previous?: number | null }) => {
+  if (previous === undefined || previous === null) return null;
+  const diff = previous - current;
+  if (diff === 0) return <div className="flex items-center gap-0.5 text-[8px] font-black text-slate-300"><Minus size={8} /></div>;
+  if (diff > 0) return <div className="flex items-center gap-0.5 text-[8px] font-black text-emerald-500"><ArrowUp size={8} />{diff}</div>;
+  return <div className="flex items-center gap-0.5 text-[8px] font-black text-rose-500"><ArrowDown size={8} />{Math.abs(diff)}</div>;
+};
 
 export default function Leaderboard({ runners }: LeaderboardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -65,13 +73,16 @@ export default function Leaderboard({ runners }: LeaderboardProps) {
                   'hover:bg-emerald-50/30'
                 }`}
               >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black transition-colors shrink-0 ${
-                  overallRank === 1 ? 'bg-yellow-400 text-white' :
-                  overallRank === 2 ? 'bg-slate-300 text-white' :
-                  overallRank === 3 ? 'bg-orange-400 text-white' :
-                  'text-slate-300 group-hover:text-emerald-600'
-                }`}>
-                  {overallRank}
+                <div className="flex flex-col items-center gap-1 shrink-0">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black transition-colors ${
+                    overallRank === 1 ? 'bg-yellow-400 text-white' :
+                    overallRank === 2 ? 'bg-slate-300 text-white' :
+                    overallRank === 3 ? 'bg-orange-400 text-white' :
+                    'text-slate-300 group-hover:text-emerald-600'
+                  }`}>
+                    {overallRank}
+                  </div>
+                  <RankChange current={overallRank} previous={runner.previousRank} />
                 </div>
                 
                 <div className="flex-1 min-w-0">

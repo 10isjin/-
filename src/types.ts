@@ -19,6 +19,7 @@ export interface UserProfile {
   runCount: number;
   classId?: string | null;
   studentId?: string | null;
+  previousRank?: number | null;
 }
 
 export interface ClassProfile {
@@ -27,6 +28,7 @@ export interface ClassProfile {
   classNumber: number;
   totalDistance: number;
   participantCount: number;
+  previousRank?: number | null;
 }
 
 export interface GlobalStats {

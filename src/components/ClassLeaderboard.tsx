@@ -1,12 +1,20 @@
 import { useState } from 'react';
 import { ClassProfile, UserProfile } from '../types';
-import { Users, Hash, ChevronDown, ChevronUp, X, Trophy } from 'lucide-react';
+import { Users, Hash, ChevronDown, ChevronUp, X, Trophy, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface ClassLeaderboardProps {
   classes: ClassProfile[];
   getClassMembers: (classId: string) => Promise<UserProfile[]>;
 }
+
+const RankChange = ({ current, previous }: { current: number, previous?: number | null }) => {
+  if (previous === undefined || previous === null) return null;
+  const diff = previous - current;
+  if (diff === 0) return <div className="flex items-center gap-0.5 text-[8px] font-black text-slate-300"><Minus size={8} /></div>;
+  if (diff > 0) return <div className="flex items-center gap-0.5 text-[8px] font-black text-emerald-500"><ArrowUp size={8} />{diff}</div>;
+  return <div className="flex items-center gap-0.5 text-[8px] font-black text-rose-500"><ArrowDown size={8} />{Math.abs(diff)}</div>;
+};
 
 export default function ClassLeaderboard({ classes, getClassMembers }: ClassLeaderboardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -50,14 +58,17 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
                 'hover:bg-emerald-50/30'
               }`}
             >
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black transition-colors shrink-0 ${
-                index === 0 ? 'bg-yellow-400 text-white shadow-lg shadow-yellow-200' :
-                index === 1 ? 'bg-slate-300 text-white shadow-lg shadow-slate-200' :
-                index === 2 ? 'bg-orange-400 text-white shadow-lg shadow-orange-200' :
-                'bg-slate-50 text-slate-400 group-hover:bg-emerald-600 group-hover:text-white'
-              }`}>
-                {index + 1}
-              </div>
+             <div className="flex flex-col items-center gap-1 shrink-0">
+               <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black transition-colors ${
+                 index === 0 ? 'bg-yellow-400 text-white shadow-lg shadow-yellow-200' :
+                 index === 1 ? 'bg-slate-300 text-white shadow-lg shadow-slate-200' :
+                 index === 2 ? 'bg-orange-400 text-white shadow-lg shadow-orange-200' :
+                 'bg-slate-50 text-slate-400 group-hover:bg-emerald-600 group-hover:text-white'
+               }`}>
+                 {index + 1}
+               </div>
+               <RankChange current={index + 1} previous={cls.previousRank} />
+             </div>
               
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
