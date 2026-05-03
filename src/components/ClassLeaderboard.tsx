@@ -11,9 +11,23 @@ interface ClassLeaderboardProps {
 const RankChange = ({ current, previous }: { current: number, previous?: number | null }) => {
   if (previous === undefined || previous === null) return null;
   const diff = previous - current;
-  if (diff === 0) return <div className="flex items-center gap-0.5 text-[8px] font-black text-slate-300"><Minus size={8} /></div>;
-  if (diff > 0) return <div className="flex items-center gap-0.5 text-[8px] font-black text-emerald-500"><ArrowUp size={8} />{diff}</div>;
-  return <div className="flex items-center gap-0.5 text-[8px] font-black text-rose-500"><ArrowDown size={8} />{Math.abs(diff)}</div>;
+  if (diff === 0) return (
+    <div className="flex items-center gap-0.5 px-1.5 py-0.5 bg-slate-100 rounded text-[10px] font-black text-slate-400">
+      <Minus size={10} strokeWidth={3} />
+    </div>
+  );
+  if (diff > 0) return (
+    <div className="flex items-center gap-0.5 px-1.5 py-0.5 bg-emerald-100 rounded text-[10px] font-black text-emerald-600">
+      <ArrowUp size={10} strokeWidth={3} />
+      {diff}
+    </div>
+  );
+  return (
+    <div className="flex items-center gap-0.5 px-1.5 py-0.5 bg-rose-100 rounded text-[10px] font-black text-rose-600">
+      <ArrowDown size={10} strokeWidth={3} />
+      {Math.abs(diff)}
+    </div>
+  );
 };
 
 export default function ClassLeaderboard({ classes, getClassMembers }: ClassLeaderboardProps) {
