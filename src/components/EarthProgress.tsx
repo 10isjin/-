@@ -94,9 +94,9 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
         </div>
 
         {/* The Track */}
-        <div className="relative h-6 bg-slate-100 rounded-full mb-4 group shadow-inner">
+        <div className="relative h-6 bg-slate-100/80 rounded-full mb-4 group shadow-inner border border-slate-200/50">
           <motion.div 
-            className="absolute top-0 left-0 h-full bg-linear-to-r from-emerald-600 via-emerald-400 to-green-300 rounded-full shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+            className="absolute top-0 left-0 h-full bg-linear-to-r from-emerald-600 via-emerald-400 to-green-300 rounded-full shadow-[0_0_15px_rgba(16,185,129,0.2)]"
             initial={{ width: 0 }}
             animate={{ width: `${percentage}%` }}
             transition={{ duration: 2, ease: "circOut" }}
@@ -109,22 +109,23 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
           {[25, 50, 75].map((pos) => (
             <div 
               key={pos} 
-              className="absolute top-0 w-px h-full bg-white/50" 
+              className="absolute top-0 w-px h-full bg-slate-200/50" 
               style={{ left: `${pos}%` }}
             />
           ))}
 
-          {/* Glowing Earth Marker */}
+          {/* Integrated Earth Marker */}
           <motion.div 
-            className="absolute -top-6 w-16 h-16 pointer-events-none z-20"
+            className="absolute top-1/2 w-10 h-10 md:w-14 md:h-14 pointer-events-none z-20 -translate-x-1/2 -translate-y-1/2"
             initial={{ left: 0 }}
-            animate={{ left: `calc(${percentage}% - 32px)` }}
+            animate={{ left: `${percentage}%` }}
             transition={{ duration: 2, ease: "circOut" }}
           >
             <div className="relative w-full h-full flex items-center justify-center">
-              <div className="absolute inset-0 bg-emerald-500/20 blur-xl animate-pulse rounded-full" />
-              <div className="bg-white p-3 rounded-full shadow-2xl border-2 border-emerald-500">
-                <Globe size={24} className="text-emerald-500 animate-spin-slow" />
+              <div className="absolute inset-0 bg-emerald-400/40 blur-md animate-pulse rounded-full" />
+              <div className="bg-white p-1.5 md:p-2.5 rounded-full shadow-lg border-2 border-emerald-500 ring-4 ring-emerald-500/10">
+                <Globe size={16} className="text-emerald-500 animate-spin-slow md:hidden" />
+                <Globe size={22} className="text-emerald-500 animate-spin-slow hidden md:block" />
               </div>
             </div>
           </motion.div>
