@@ -96,7 +96,7 @@ export default function Leaderboard({ runners }: LeaderboardProps) {
                   }`}>
                     {overallRank}
                   </div>
-                  <RankChange current={overallRank} previous={runner.previousRank} />
+                  {runner.totalDistance > 0 && <RankChange current={overallRank} previous={runner.previousRank} />}
                 </div>
                 
                 <div className="flex-1 min-w-0">

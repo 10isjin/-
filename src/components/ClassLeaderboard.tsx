@@ -81,7 +81,7 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
                }`}>
                  {index + 1}
                </div>
-               <RankChange current={index + 1} previous={cls.previousRank} />
+               {cls.totalDistance > 0 && <RankChange current={index + 1} previous={cls.previousRank} />}
              </div>
               
               <div className="flex-1 min-w-0">

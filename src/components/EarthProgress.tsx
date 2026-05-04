@@ -83,11 +83,11 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
 
           <div className="flex gap-12">
              <div className="text-right">
-              <p className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-1">Target</p>
+              <p className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-1">목표</p>
               <p className="text-xl font-bold text-slate-900 number-font">40,075 <span className="text-sm text-slate-400">km</span></p>
             </div>
             <div className="text-right">
-              <p className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-1">Current</p>
+              <p className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-1">현재</p>
               <p className="text-xl font-bold text-emerald-600 number-font">{currentDistance.toLocaleString()} <span className="text-sm text-emerald-300">km</span></p>
             </div>
           </div>

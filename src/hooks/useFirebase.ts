@@ -127,7 +127,8 @@ export function useFirebase() {
     // Fetch all users to allow full search capability
     const q = query(
       collection(db, 'users'), 
-      orderBy('totalDistance', 'desc')
+      orderBy('totalDistance', 'desc'),
+      orderBy('__name__', 'asc')
     );
     const unsub = onSnapshot(q, (snap) => {
       const users: UserProfile[] = [];
@@ -141,7 +142,7 @@ export function useFirebase() {
 
   // Top Classes Listener
   useEffect(() => {
-    const q = query(collection(db, 'classes'), orderBy('totalDistance', 'desc'), limit(50));
+    const q = query(collection(db, 'classes'), orderBy('totalDistance', 'desc'), orderBy('__name__', 'asc'), limit(50));
     const unsub = onSnapshot(q, (snap) => {
       const cls: ClassProfile[] = [];
       snap.forEach(doc => {
@@ -204,7 +205,7 @@ export function useFirebase() {
       // Sort by distance in memory for all users in the class
       return snap.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as UserProfile))
-        .sort((a, b) => b.totalDistance - a.totalDistance);
+        .sort((a, b) => (b.totalDistance - a.totalDistance) || a.id.localeCompare(b.id));
     } catch (err) {
       handleFirestoreError(err, OperationType.GET, `users/${classId}`);
       return [];
@@ -222,8 +223,8 @@ export function useFirebase() {
       const existingUsers = existingUsersSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
       const existingClasses = existingClassesSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
 
-      const sortedExistingUsers = [...existingUsers].sort((a, b) => (b.totalDistance || 0) - (a.totalDistance || 0));
-      const sortedExistingClasses = [...existingClasses].sort((a, b) => (b.totalDistance || 0) - (a.totalDistance || 0));
+      const sortedExistingUsers = [...existingUsers].sort((a, b) => (b.totalDistance || 0) - (a.totalDistance || 0) || a.id.localeCompare(b.id));
+      const sortedExistingClasses = [...existingClasses].sort((a, b) => (b.totalDistance || 0) - (a.totalDistance || 0) || a.id.localeCompare(b.id));
 
       const userRankMap: Record<string, number> = {};
       sortedExistingUsers.forEach((u, i) => { userRankMap[u.id] = i + 1; });
@@ -349,6 +350,7 @@ export function useFirebase() {
       }
 
       // 1. UPDATE ALL INDIVIDUAL USERS
+      // We first normalize and update all users from the CSV.
       for (const [userId, update] of Object.entries(userUpdates)) {
         let finalDisplayName = update.displayName;
         if (update.role === 'parent' || (update.role === 'resident' && !update.classId)) {
@@ -361,12 +363,16 @@ export function useFirebase() {
           }
         }
 
+        // Normalize classId format to string "G-C" (e.g., "1-1")
+        const normalizedRole = update.role;
+        const normalizedClassId = (update.role === 'student' || update.role === 'teacher') ? update.classId : null;
+
         await setDoc(doc(db, 'users', userId), {
           displayName: finalDisplayName,
-          role: update.role,
+          role: normalizedRole,
           totalDistance: update.totalDistance,
           runCount: update.runCount,
-          classId: update.classId || null,
+          classId: normalizedClassId,
           studentId: update.studentId || null,
           previousRank: userRankMap[userId] || null,
           updatedAt: Timestamp.now()
@@ -374,7 +380,8 @@ export function useFirebase() {
       }
 
       // 2. FULL RECALCULATION: Fetch all users from DB and rebuild Classes & Global Stats
-      // This is the "Source of Truth" sync.
+      // This ensures that even users NOT in the current CSV but still in Firestore are accounted for
+      // or their outdated class assignments are handled.
       const allUsersSnap = await getDocs(collection(db, 'users'));
       const newClassAggregates: Record<string, { dist: number, participants: Set<string>, g: number, c: number }> = {};
       let totalDistanceSum = 0;
@@ -384,19 +391,44 @@ export function useFirebase() {
         const u = uDoc.data();
         const d = u.totalDistance || 0;
         totalDistanceSum += d;
-        totalParticipantsCount++;
+        
+        // Count as "overall participant" if they have run at least some distance
+        if (d > 0) totalParticipantsCount++;
 
+        // Class Aggregation: Only students and teachers count towards class stats
         if (u.classId && (u.role === 'student' || u.role === 'teacher')) {
-          if (!newClassAggregates[u.classId]) {
-            const [g, c] = u.classId.split('-').map(Number);
-            newClassAggregates[u.classId] = { dist: 0, participants: new Set(), g, c };
+          const classId = String(u.classId).trim();
+          if (!newClassAggregates[classId]) {
+            const parts = classId.split('-');
+            const g = parseInt(parts[0]) || 0;
+            const c = parseInt(parts[1]) || 0;
+            newClassAggregates[classId] = { dist: 0, participants: new Set(), g, c };
           }
-          newClassAggregates[u.classId].dist += d;
-          newClassAggregates[u.classId].participants.add(uDoc.id);
+          newClassAggregates[classId].dist += d;
+          if (d > 0) {
+            newClassAggregates[classId].participants.add(uDoc.id);
+          }
         }
       });
 
       // 3. WRITE UPDATED CLASS STATS
+      // We iterate over existing classes to ensure even those with 0 members are reset/updated
+      for (const clsDoc of existingClassesSnap.docs) {
+        const classId = clsDoc.id;
+        const stats = newClassAggregates[classId];
+        
+        await setDoc(doc(db, 'classes', classId), {
+          totalDistance: stats ? Number(stats.dist.toFixed(2)) : 0,
+          participantCount: stats ? stats.participants.size : 0,
+          previousRank: classRankMap[classId] || null,
+          updatedAt: Timestamp.now()
+        }, { merge: true });
+        
+        // Remove from newClassAggregates so we don't process it again as a "new" class
+        delete newClassAggregates[classId];
+      }
+
+      // 4. WRITE ANY NEW CLASSES (that didn't exist before)
       for (const [classId, stats] of Object.entries(newClassAggregates)) {
         await setDoc(doc(db, 'classes', classId), {
           id: classId,
@@ -404,12 +436,12 @@ export function useFirebase() {
           classNumber: stats.c,
           totalDistance: Number(stats.dist.toFixed(2)),
           participantCount: stats.participants.size,
-          previousRank: classRankMap[classId] || null,
+          previousRank: null,
           updatedAt: Timestamp.now()
-        });
+        }, { merge: true });
       }
 
-      // 4. WRITE FINAL GLOBAL STATS
+      // 5. WRITE FINAL GLOBAL STATS
       await setDoc(doc(db, 'globalStats', 'current'), {
         totalDistance: Number(totalDistanceSum.toFixed(2)),
         totalParticipants: totalParticipantsCount,
