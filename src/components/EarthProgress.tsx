@@ -16,10 +16,10 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
   const end = END_DATE;
 
   const elapsedMs = now.getTime() - start.getTime();
-  const elapsedDays = Math.max(1, Math.floor(elapsedMs / (1000 * 60 * 60 * 24)));
+  const elapsedDays = Math.max(1, Math.floor(elapsedMs / (1000 * 60 * 60 * 24)) + 1);
   
   const remainingMs = end.getTime() - now.getTime();
-  const remainingDays = Math.max(1, Math.floor(remainingMs / (1000 * 60 * 60 * 24)));
+  const remainingDays = Math.max(1, Math.ceil(remainingMs / (1000 * 60 * 60 * 24)));
 
   const dailyAverageActual = currentDistance / elapsedDays;
   const dailyAverageRequired = Math.max(0, (CHALLENGE_GOAL - currentDistance) / remainingDays);
