@@ -37,7 +37,6 @@ export default function ActivityFeed({ runs }: ActivityFeedProps) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-slate-900 leading-tight">{run.userName}</p>
-                  </div>
                     <div className="flex items-center gap-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
                       <div className="flex items-center gap-1">
                         <Clock size={10} />
@@ -48,7 +47,10 @@ export default function ActivityFeed({ runs }: ActivityFeedProps) {
                 </div>
                 
                 <div className="text-right">
-                  <span className="text-xl font-black text-emerald-600 number-font tracking-tighter">+{run.distance.toFixed(1)}</span>
+                  <div className="font-black text-emerald-600 number-font tracking-tighter">
+                    <span className="text-xl">+{Math.floor(run.distance)}</span>
+                    <span className="text-xs">.{(run.distance % 1).toFixed(2).split('.')[1]}</span>
+                  </div>
                   <span className="text-[10px] font-black text-slate-300 ml-1">KM</span>
                 </div>
               </motion.div>

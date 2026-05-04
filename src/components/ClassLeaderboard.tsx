@@ -106,11 +106,12 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
               </div>
               
               <div className="text-right shrink-0">
-                <span className={`text-2xl font-black number-font tracking-tighter ${
+                <div className={`font-black number-font tracking-tighter ${
                   index === 0 ? 'text-yellow-600' : 'text-emerald-600'
                 }`}>
-                  {cls.totalDistance.toFixed(1)}
-                </span>
+                  <span className="text-2xl">{Math.floor(cls.totalDistance)}</span>
+                  <span className="text-sm">.{(cls.totalDistance % 1).toFixed(2).split('.')[1]}</span>
+                </div>
                 <span className="text-[10px] font-black text-slate-300 ml-1">KM</span>
               </div>
             </motion.div>
@@ -202,7 +203,10 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-lg font-black text-emerald-600 number-font tracking-tighter">{member.totalDistance.toFixed(1)}</p>
+                          <div className="font-black text-emerald-600 number-font tracking-tighter">
+                            <span className="text-lg">{Math.floor(member.totalDistance)}</span>
+                            <span className="text-xs">.{(member.totalDistance % 1).toFixed(2).split('.')[1]}</span>
+                          </div>
                           <p className="text-[9px] font-black text-slate-300 uppercase">KM</p>
                         </div>
                       </div>

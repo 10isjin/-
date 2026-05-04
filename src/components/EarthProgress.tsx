@@ -75,7 +75,7 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
             <p className="text-[10px] font-black uppercase text-slate-400 tracking-[0.3em]">전체 달성률</p>
             <div className="flex items-end gap-2">
               <span className="text-7xl font-black text-emerald-600 number-font tracking-tighter">
-                {percentage.toFixed(1)}
+                {percentage.toFixed(2)}
               </span>
               <span className="text-2xl font-black text-emerald-300 mb-2">%</span>
             </div>
@@ -165,7 +165,7 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
             <TrendingUp size={10} className="text-emerald-500" /> 현재 일평균
           </p>
           <p className="text-lg font-black number-font text-emerald-600">
-            {dailyAverageActual.toFixed(1)} <span className="text-[10px] font-medium">km</span>
+            {dailyAverageActual.toFixed(2)} <span className="text-[10px] font-medium ml-0.5">km</span>
           </p>
         </div>
 
@@ -175,7 +175,7 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
             <Target size={10} className="text-orange-500" /> 목표 일평균
           </p>
           <p className="text-lg font-black number-font text-orange-600">
-            {dailyAverageRequired.toFixed(1)} <span className="text-[10px] font-medium">km</span>
+            {dailyAverageRequired.toFixed(2)} <span className="text-[10px] font-medium ml-0.5">km</span>
           </p>
         </div>
       </div>
@@ -187,8 +187,8 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
         </div>
         <div className="flex-1">
           <p className="text-slate-600 text-xs font-medium leading-relaxed">
-            지구 <span className="text-emerald-600 font-bold">{(currentDistance / 100).toFixed(1)}개국</span> 돌파! 
-            목표까지 일평균 <span className="text-orange-600 font-bold">{dailyAverageRequired.toFixed(1)}km</span>가 더 필요합니다.
+            지구 <span className="text-emerald-600 font-bold">{(currentDistance / 100).toFixed(2)}개국</span> 돌파! 
+            목표까지 일평균 <span className="text-orange-600 font-bold">{dailyAverageRequired.toFixed(2)}km</span>가 더 필요합니다.
           </p>
         </div>
       </div>

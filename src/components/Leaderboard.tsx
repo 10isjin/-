@@ -137,11 +137,12 @@ export default function Leaderboard({ runners }: LeaderboardProps) {
                 </div>
                 
                 <div className="text-right shrink-0">
-                  <span className={`text-xl font-black number-font tracking-tighter transition-colors ${
+                  <div className={`font-black number-font tracking-tighter transition-colors ${
                     overallRank === 1 ? 'text-yellow-600' : 'text-slate-900 group-hover:text-emerald-600'
                   }`}>
-                    {runner.totalDistance.toFixed(1)}
-                  </span>
+                    <span className="text-xl">{Math.floor(runner.totalDistance)}</span>
+                    <span className="text-xs">.{(runner.totalDistance % 1).toFixed(2).split('.')[1]}</span>
+                  </div>
                   <span className="text-[10px] font-black text-slate-300 ml-1">KM</span>
                 </div>
               </motion.div>
