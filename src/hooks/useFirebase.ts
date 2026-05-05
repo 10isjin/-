@@ -175,18 +175,21 @@ export function useFirebase() {
   }, [user]);
 
   const trackVisit = async () => {
-    const today = new Date().toISOString().split('T')[0];
+    // We use Asia/Seoul timezone to ensure "Today" aligns with the users in Korea
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
     const lastVisit = localStorage.getItem('last_visit_date');
 
     if (lastVisit === today) return;
 
     try {
       const visitorRef = doc(db, 'stats', 'visitors');
-      const dayField = `dailyVisits.${today}`;
       
+      // Use nested object structure for setDoc + merge to ensure it's stored as a Map, not a flat field with dots
       await setDoc(visitorRef, {
         totalVisits: increment(1),
-        [dayField]: increment(1)
+        dailyVisits: {
+          [today]: increment(1)
+        }
       }, { merge: true });
 
       localStorage.setItem('last_visit_date', today);

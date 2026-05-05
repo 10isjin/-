@@ -99,7 +99,7 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
               <div>
                 <p className="text-[10px] font-black text-slate-400 tracking-widest uppercase">오늘의 접속자 수</p>
                 <h3 className="text-2xl font-black text-slate-900 leading-none mt-1">
-                  {visitorStats?.dailyVisits?.[new Date().toISOString().split('T')[0]]?.toLocaleString() || 0}
+                  {visitorStats?.dailyVisits?.[new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date())]?.toLocaleString() || 0}
                   <span className="text-sm font-medium text-slate-400 ml-1">명</span>
                 </h3>
               </div>
