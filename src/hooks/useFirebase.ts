@@ -13,7 +13,8 @@ import {
   Timestamp,
   getDoc,
   where,
-  getDocs
+  getDocs,
+  deleteDoc
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { Run, UserProfile, GlobalStats, UserRole, ClassProfile, VisitorStats } from '../types';
@@ -288,24 +289,34 @@ export function useFirebase() {
           else if (fullText.includes('부모')) role = 'parent';
         }
 
-        // Student ID & Class Extraction
-        const isRunnerDefaultId = /RUNNER[-]?\d+/i.test(nickname);
+        // Student ID & Class Extraction logic improved for multiple patterns
+        const isNicknameRunner = /RUNNER[-]?\d+/i.test(nickname);
+        const isRealNameRunner = /RUNNER[-]?\d+/i.test(realName);
+
         let studentId = null;
         let grade = 0;
         let classNum = 0;
 
-        if (nickname && !isRunnerDefaultId) {
-          const cleanedNickname = nickname.replace(/RUNNER\d+/gi, '');
-          const digit5Match = cleanedNickname.match(/([1-3][0-9]{4})/);
+        // Try extracting from non-RUNNER strings
+        const extractionTargets = [];
+        if (!isNicknameRunner && nickname) extractionTargets.push(nickname);
+        if (!isRealNameRunner && realName) extractionTargets.push(realName);
+
+        for (const target of extractionTargets) {
+          if (grade) break;
+
+          // Pattern 1: Standalone 5-digit number (e.g., 10320 -> 1-03)
+          // We use word boundaries \b and check for exactly 5 digits to avoid matching parts of longer strings
+          const digit5Match = target.match(/\b([1-3])([0-9]{2})[0-9]{2}\b/);
           if (digit5Match) {
-            studentId = digit5Match[1];
-            grade = parseInt(studentId[0]);
-            classNum = parseInt(studentId.substring(1, 3));
+            grade = parseInt(digit5Match[1]);
+            classNum = parseInt(digit5Match[2]);
+            studentId = digit5Match[0];
+            continue;
           }
-        }
-        
-        if (!grade && !isRunnerDefaultId) {
-          const textMatch = name.match(/([1-3])\s*[학년-]\s*([0-9]{1,2})\s*반?/);
+
+          // Pattern 2: G-C format (e.g., 1-6담임, 교사3-4, 1학년 3반)
+          const textMatch = target.match(/([1-3])\s*[학년\/\-]\s*([0-9]{1,2})\s*반?/);
           if (textMatch) {
             grade = parseInt(textMatch[1]);
             classNum = parseInt(textMatch[2]);
@@ -414,34 +425,40 @@ export function useFirebase() {
         }
       });
 
-      // 3. WRITE UPDATED CLASS STATS
-      // We iterate over existing classes to ensure even those with 0 members are reset/updated
+      // 3. WRITE OR DELETE UPDATED CLASS STATS
+      // We check all existing classes. If they no longer have distance/students, DELETE THEM.
       for (const clsDoc of existingClassesSnap.docs) {
         const classId = clsDoc.id;
         const stats = newClassAggregates[classId];
         
-        await setDoc(doc(db, 'classes', classId), {
-          totalDistance: stats ? Number(stats.dist.toFixed(2)) : 0,
-          participantCount: stats ? stats.participants.size : 0,
-          previousRank: classRankMap[classId] || null,
-          updatedAt: Timestamp.now()
-        }, { merge: true });
+        if (stats && (stats.dist > 0 || stats.participants.size > 0)) {
+          await setDoc(doc(db, 'classes', classId), {
+            totalDistance: Number(stats.dist.toFixed(2)),
+            participantCount: stats.participants.size,
+            previousRank: classRankMap[classId] || null,
+            updatedAt: Timestamp.now()
+          }, { merge: true });
+        } else {
+          // AUTO-EXCLUDE: Delete classes with no distance or participants
+          await deleteDoc(doc(db, 'classes', classId));
+        }
         
-        // Remove from newClassAggregates so we don't process it again as a "new" class
         delete newClassAggregates[classId];
       }
 
-      // 4. WRITE ANY NEW CLASSES (that didn't exist before)
+      // 4. WRITE ANY NEW CLASSES
       for (const [classId, stats] of Object.entries(newClassAggregates)) {
-        await setDoc(doc(db, 'classes', classId), {
-          id: classId,
-          grade: stats.g,
-          classNumber: stats.c,
-          totalDistance: Number(stats.dist.toFixed(2)),
-          participantCount: stats.participants.size,
-          previousRank: null,
-          updatedAt: Timestamp.now()
-        }, { merge: true });
+        if (stats.dist > 0 || stats.participants.size > 0) {
+          await setDoc(doc(db, 'classes', classId), {
+            id: classId,
+            grade: stats.g,
+            classNumber: stats.c,
+            totalDistance: Number(stats.dist.toFixed(2)),
+            participantCount: stats.participants.size,
+            previousRank: null,
+            updatedAt: Timestamp.now()
+          }, { merge: true });
+        }
       }
 
       // 5. WRITE FINAL GLOBAL STATS
