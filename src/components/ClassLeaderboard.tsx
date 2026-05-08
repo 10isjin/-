@@ -53,7 +53,18 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
           <Hash size={18} className="text-emerald-400" />
           학급별 순위
         </h3>
-        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">학급 순위</span>
+        {classes.length > 5 && (
+          <button 
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-full text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer border border-white/5"
+          >
+            {isExpanded ? (
+              <>접기 <ChevronUp size={12} /></>
+            ) : (
+              <>전체보기 <ChevronDown size={12} /></>
+            )}
+          </button>
+        )}
       </div>
       
       <div className="divide-y divide-slate-50 flex-1">
@@ -124,19 +135,6 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
           </div>
         )}
       </div>
-
-      {classes.length > 5 && (
-        <button 
-          onClick={() => setIsExpanded(!isExpanded)}
-          className="w-full p-4 text-[11px] font-black uppercase tracking-[0.2em] text-slate-400 hover:text-emerald-600 hover:bg-slate-50 transition-all flex items-center justify-center gap-2 border-t border-slate-50 cursor-pointer"
-        >
-          {isExpanded ? (
-            <>접기 <ChevronUp size={14} /></>
-          ) : (
-            <>전체보기 <ChevronDown size={14} /></>
-          )}
-        </button>
-      )}
 
       {/* Class Details Modal */}
       <AnimatePresence>
