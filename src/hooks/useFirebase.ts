@@ -363,6 +363,9 @@ export function useFirebase() {
         userUpdates[rawId].runCount += count;
       }
 
+      const existingUserMap = new Map<string, any>();
+      existingUsers.forEach(u => existingUserMap.set(u.id, u));
+
       // 1. UPDATE ALL INDIVIDUAL USERS
       // We first normalize and update all users from the CSV.
       for (const [userId, update] of Object.entries(userUpdates)) {
@@ -381,6 +384,19 @@ export function useFirebase() {
         const normalizedRole = update.role;
         const normalizedClassId = (update.role === 'student' || update.role === 'teacher') ? update.classId : null;
 
+        const previousUser = existingUserMap.get(userId);
+        const prevTotal = previousUser?.totalDistance || 0;
+        const previousHistory = previousUser?.history || {};
+        
+        // Calculate the delta distance
+        const delta = Math.max(0, update.totalDistance - prevTotal);
+        const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
+        
+        const finalHistory = { ...previousHistory };
+        if (delta > 0) {
+          finalHistory[todayStr] = Number(((finalHistory[todayStr] || 0) + delta).toFixed(2));
+        }
+
         await setDoc(doc(db, 'users', userId), {
           displayName: finalDisplayName,
           role: normalizedRole,
@@ -389,6 +405,7 @@ export function useFirebase() {
           classId: normalizedClassId,
           studentId: update.studentId || null,
           previousRank: userRankMap[userId] || null,
+          history: finalHistory,
           updatedAt: Timestamp.now()
         }, { merge: true });
       }

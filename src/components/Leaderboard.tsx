@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { UserProfile } from '../types';
 import { Trophy, User as UserIcon, ChevronDown, ChevronUp, Search, Hash, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import RunnerDetailsModal from './RunnerDetailsModal';
 
 interface LeaderboardProps {
   runners: UserProfile[];
@@ -32,6 +33,7 @@ const RankChange = ({ current, previous }: { current: number, previous?: number 
 export default function Leaderboard({ runners }: LeaderboardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedRunner, setSelectedRunner] = useState<UserProfile | null>(null);
 
   const filteredRunners = useMemo(() => {
     if (!searchTerm.trim()) return runners;
@@ -91,7 +93,8 @@ export default function Leaderboard({ runners }: LeaderboardProps) {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, height: 0 }}
-                className={`flex items-center gap-4 p-4 transition-all group overflow-hidden ${
+                onClick={() => setSelectedRunner(runner)}
+                className={`flex items-center gap-4 p-4 transition-all group overflow-hidden cursor-pointer ${
                   overallRank === 1 ? 'bg-yellow-50/50 hover:bg-yellow-50' : 
                   overallRank === 2 ? 'bg-slate-50/50 hover:bg-slate-50' : 
                   overallRank === 3 ? 'bg-orange-50/30 hover:bg-orange-50/50' : 
@@ -167,6 +170,16 @@ export default function Leaderboard({ runners }: LeaderboardProps) {
           </div>
         )}
       </div>
+
+      {/* Runner Details Modal overlay */}
+      <AnimatePresence>
+        {selectedRunner && (
+          <RunnerDetailsModal 
+            runner={selectedRunner} 
+            onClose={() => setSelectedRunner(null)} 
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

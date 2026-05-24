@@ -20,6 +20,7 @@ export interface UserProfile {
   classId?: string | null;
   studentId?: string | null;
   previousRank?: number | null;
+  history?: Record<string, number> | null;
 }
 
 export interface ClassProfile {

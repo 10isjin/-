@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { ClassProfile, UserProfile } from '../types';
 import { Users, Hash, ChevronDown, ChevronUp, X, Trophy, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import ProgressChart from './ProgressChart';
+import { generateClassHistory } from '../utils/history';
+import RunnerDetailsModal from './RunnerDetailsModal';
 
 interface ClassLeaderboardProps {
   classes: ClassProfile[];
@@ -35,6 +38,7 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
   const [selectedClass, setSelectedClass] = useState<ClassProfile | null>(null);
   const [classMembers, setClassMembers] = useState<UserProfile[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
+  const [selectedRunner, setSelectedRunner] = useState<UserProfile | null>(null);
 
   const displayClasses = isExpanded ? classes : classes.slice(0, 5);
 
@@ -188,35 +192,59 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
                     <p className="text-xs font-black uppercase tracking-widest">데이터 불러오는 중...</p>
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    {classMembers.map((member, idx) => (
-                      <div key={member.id} className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 hover:bg-emerald-50 transition-colors group">
-                        <div className="flex items-center gap-4">
-                          <span className="w-6 text-[10px] font-black text-slate-300 group-hover:text-emerald-400">{idx + 1}</span>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-bold text-slate-900 leading-tight">{member.displayName}</p>
-                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
-                              {member.role === 'student' ? '학생' : member.role === 'teacher' ? '교사' : '일반'}
-                            </p>
+                  <div className="space-y-6">
+                    {/* Class-wide Progress Trend Chart */}
+                    <ProgressChart 
+                      records={generateClassHistory(classMembers)} 
+                      title={`${selectedClass.grade}학년 ${selectedClass.classNumber}반`} 
+                      isClass 
+                    />
+
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 px-1 mb-2">학급 주자 기록 일람</h4>
+                      {classMembers.map((member, idx) => (
+                        <div 
+                          key={member.id} 
+                          onClick={() => setSelectedRunner(member)}
+                          className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 hover:bg-emerald-50 transition-all group cursor-pointer"
+                        >
+                          <div className="flex items-center gap-4">
+                            <span className="w-6 text-[10px] font-black text-slate-300 group-hover:text-emerald-400">{idx + 1}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold text-slate-900 leading-tight group-hover:text-emerald-700 transition-colors">{member.displayName}</p>
+                              <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                                {member.role === 'student' ? '학생' : member.role === 'teacher' ? '교사' : '일반'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-black text-emerald-600 number-font tracking-tighter">
+                              <span className="text-lg">{Math.floor(member.totalDistance)}</span>
+                              <span className="text-xs">.{(member.totalDistance % 1).toFixed(2).split('.')[1]}</span>
+                            </div>
+                            <p className="text-[9px] font-black text-slate-300 uppercase">KM</p>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <div className="font-black text-emerald-600 number-font tracking-tighter">
-                            <span className="text-lg">{Math.floor(member.totalDistance)}</span>
-                            <span className="text-xs">.{(member.totalDistance % 1).toFixed(2).split('.')[1]}</span>
-                          </div>
-                          <p className="text-[9px] font-black text-slate-300 uppercase">KM</p>
-                        </div>
-                      </div>
-                    ))}
-                    {classMembers.length === 0 && (
-                      <p className="text-center py-12 text-slate-400 font-medium italic">이 학급에는 아직 기록된 학생이 없습니다.</p>
-                    )}
+                      ))}
+                      {classMembers.length === 0 && (
+                        <p className="text-center py-12 text-slate-400 font-medium italic">이 학급에는 아직 기록된 학생이 없습니다.</p>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Runner Details Modal overlay */}
+      <AnimatePresence>
+        {selectedRunner && (
+          <RunnerDetailsModal 
+            runner={selectedRunner} 
+            onClose={() => setSelectedRunner(null)} 
+          />
         )}
       </AnimatePresence>
     </div>
