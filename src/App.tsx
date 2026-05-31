@@ -14,7 +14,8 @@ import {
   ShieldCheck,
   TrendingUp, 
   Users,
-  Trophy
+  Trophy,
+  Megaphone
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -101,6 +102,36 @@ export default function App() {
             lastUpdated={globalStats?.lastUpdated ? globalStats.lastUpdated.toDate() : null}
           />
         </section>
+
+        {/* Notice Info Board Section */}
+        <div className="max-w-7xl mx-auto px-6 mt-10">
+          <div className="bg-white border border-emerald-100 rounded-[2rem] p-5 shadow-[0_8px_30px_rgb(16,185,129,0.02)] flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-2xl bg-[#E8F5F1] text-emerald-600 flex items-center justify-center shrink-0">
+                <Megaphone size={18} className="stroke-[2.5]" />
+              </div>
+              <div>
+                <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5 uppercase tracking-wider">
+                  <span className="inline-block w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                  갈매지구런 중요 참여 수칙 및 안내
+                </h4>
+                <div className="flex flex-col gap-1 mt-1.5 text-slate-600 font-medium text-xs">
+                  <p className="flex items-center gap-1.5 leading-relaxed text-[11px] sm:text-xs">
+                    <span className="text-emerald-600 font-black">1.</span> 한 번 운동할 때 <strong className="text-emerald-700 font-extrabold">최소 1km 이상</strong> 활동해야 챌린지 기록에 정상 누적됩니다.
+                  </p>
+                  <p className="flex items-center gap-1.5 leading-relaxed text-[11px] sm:text-xs">
+                    <span className="text-emerald-600 font-black">2.</span> 당일의 달리기 기록은 런데이 시스템 특성상 <strong className="text-emerald-700 font-extrabold">다음 날 서버 동기화 작업</strong> 이후에 반영될 수 있습니다.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="hidden lg:block text-right pr-4 shrink-0">
+              <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-100/50">
+                CHALLENGE RULE
+              </span>
+            </div>
+          </div>
+        </div>
 
         {/* The Leaderboards View */}
         <div className="max-w-7xl mx-auto px-6 grid md:grid-cols-2 gap-12 mt-12">
