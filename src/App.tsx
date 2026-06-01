@@ -105,23 +105,25 @@ export default function App() {
 
         {/* Notice Info Board Section */}
         <div className="max-w-7xl mx-auto px-6 mt-10">
-          <div className="bg-white border border-emerald-100 rounded-[2rem] p-5 shadow-[0_8px_30px_rgb(16,185,129,0.02)] flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-start gap-4">
-              <div className="w-10 h-10 rounded-2xl bg-[#E8F5F1] text-emerald-600 flex items-center justify-center shrink-0">
+          <div className="bg-white border border-emerald-100 rounded-[2rem] p-4 sm:p-6 shadow-[0_8px_30px_rgb(16,185,129,0.02)] flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3 sm:gap-4">
+              <div className="w-10 h-10 rounded-2xl bg-[#E8F5F1] text-emerald-600 flex items-center justify-center shrink-0 mt-0.5">
                 <Megaphone size={18} className="stroke-[2.5]" />
               </div>
-              <div>
-                <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5 uppercase tracking-wider">
-                  <span className="inline-block w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+              <div className="flex-1 min-w-0">
+                <h4 className="text-xs sm:text-sm font-black text-slate-800 flex items-center gap-1.5 uppercase tracking-wider">
+                  <span className="inline-block w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
                   갈매지구런 중요 참여 수칙 및 안내
                 </h4>
-                <div className="flex flex-col gap-1 mt-1.5 text-slate-600 font-medium text-xs">
-                  <p className="flex items-center gap-1.5 leading-relaxed text-[11px] sm:text-xs">
-                    <span className="text-emerald-600 font-black">1.</span> 한 번 운동할 때 <strong className="text-emerald-700 font-extrabold">최소 1km 이상</strong> 활동해야 챌린지 기록에 정상 누적됩니다.
-                  </p>
-                  <p className="flex items-center gap-1.5 leading-relaxed text-[11px] sm:text-xs">
-                    <span className="text-emerald-600 font-black">2.</span> 당일의 달리기 기록은 런데이 시스템 특성상 <strong className="text-emerald-700 font-extrabold">다음 날 서버 동기화 작업</strong> 이후에 반영될 수 있습니다.
-                  </p>
+                <div className="flex flex-col gap-2 mt-2 text-slate-600 font-medium text-xs">
+                  <div className="flex items-start gap-1.5 leading-relaxed text-[11px] sm:text-xs">
+                    <span className="text-emerald-600 font-black shrink-0 w-4">1.</span>
+                    <span>한 번 운동할 때 <strong className="text-emerald-700 font-extrabold">최소 1km 이상</strong> 활동해야 챌린지 기록에 정상 누적됩니다.</span>
+                  </div>
+                  <div className="flex items-start gap-1.5 leading-relaxed text-[11px] sm:text-xs">
+                    <span className="text-emerald-600 font-black shrink-0 w-4">2.</span>
+                    <span>당일의 달리기 기록은 런데이 시스템 특성상 <strong className="text-emerald-700 font-extrabold">다음 날 서버 동기화 작업</strong> 이후에 반영될 수 있습니다.</span>
+                  </div>
                 </div>
               </div>
             </div>
