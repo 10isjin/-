@@ -38,11 +38,20 @@ export default function Leaderboard({ runners }: LeaderboardProps) {
   const filteredRunners = useMemo(() => {
     if (!searchTerm.trim()) return runners;
     const lowerSearch = searchTerm.toLowerCase().trim();
-    return runners.filter(r => 
-      r.displayName.toLowerCase().includes(lowerSearch) || 
-      (r.studentId && r.studentId.includes(lowerSearch)) ||
-      (r.classId && r.classId.includes(lowerSearch))
-    );
+    return runners.filter(r => {
+      const roleKorean = r.role === 'student' ? '학생' : 
+                         r.role === 'teacher' ? '교사' : 
+                         r.role === 'parent' ? '학부모' : '주민';
+      const roleEnglish = r.role || '';
+
+      return (
+        r.displayName.toLowerCase().includes(lowerSearch) || 
+        (r.studentId && r.studentId.includes(lowerSearch)) ||
+        (r.classId && r.classId.includes(lowerSearch)) ||
+        roleKorean.includes(lowerSearch) ||
+        roleEnglish.toLowerCase().includes(lowerSearch)
+      );
+    });
   }, [runners, searchTerm]);
 
   const displayRunners = (isExpanded || searchTerm.trim()) ? filteredRunners : filteredRunners.slice(0, 5);
@@ -73,7 +82,7 @@ export default function Leaderboard({ runners }: LeaderboardProps) {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-500 transition-colors" />
           <input 
             type="text" 
-            placeholder="이름, 학번, 또는 학급으로 검색" 
+            placeholder="이름, 학번, 학급 또는 구분(학생/교사/학부모/주민)으로 검색" 
             className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-10 pr-4 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all placeholder:text-slate-300"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}

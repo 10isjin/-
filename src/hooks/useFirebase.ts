@@ -363,6 +363,16 @@ export function useFirebase() {
         userUpdates[rawId].runCount += count;
       }
 
+      // Special handling for Lee Joo-young (1-10 담임): Always add +17.78 km to her csv-provided distance
+      for (const [userId, update] of Object.entries(userUpdates)) {
+        const isLeeJooYoung = update.displayName.includes('이주영') && 
+          (update.displayName.includes('1-10') || update.classId === '1-10' || userId === '이주영');
+        
+        if (isLeeJooYoung) {
+          update.totalDistance = Number((update.totalDistance + 17.78).toFixed(2));
+        }
+      }
+
       const existingUserMap = new Map<string, any>();
       existingUsers.forEach(u => existingUserMap.set(u.id, u));
 
