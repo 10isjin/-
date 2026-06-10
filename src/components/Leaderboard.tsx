@@ -124,16 +124,16 @@ export default function Leaderboard({ runners }: LeaderboardProps) {
                 
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span className={`font-bold leading-tight ${overallRank === 1 ? 'text-yellow-700' : 'text-slate-900'}`}>
+                    <span translate="no" className={`notranslate font-bold leading-tight ${overallRank === 1 ? 'text-yellow-700' : 'text-slate-900'}`}>
                       {runner.displayName}
                     </span>
                     <div className="flex items-center gap-1">
                       {runner.studentId ? (
-                        <span className="text-[10px] font-black text-blue-400 shrink-0">
+                        <span translate="no" className="notranslate text-[10px] font-black text-blue-400 shrink-0">
                           ({runner.studentId})
                         </span>
                       ) : runner.classId ? (
-                        <span className="text-[10px] font-black text-emerald-400 shrink-0">
+                        <span translate="no" className="notranslate text-[10px] font-black text-emerald-400 shrink-0">
                           ({runner.classId.replace('-', '학년 ')}반)
                         </span>
                       ) : null}
@@ -145,7 +145,7 @@ export default function Leaderboard({ runners }: LeaderboardProps) {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <span className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest ${
+                    <span translate="no" className={`notranslate text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest ${
                       runner.role === 'student' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
                       runner.role === 'teacher' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
                       runner.role === 'parent' ? 'bg-purple-50 text-purple-600 border border-purple-100' :
@@ -159,14 +159,14 @@ export default function Leaderboard({ runners }: LeaderboardProps) {
                   </div>
                 </div>
                 
-                <div className="text-right shrink-0">
-                  <div className={`font-black number-font tracking-tighter transition-colors ${
+                <div className="text-right shrink-0 flex items-baseline justify-end gap-1">
+                  <span translate="no" className={`notranslate font-black number-font tracking-tighter text-xl transition-colors ${
                     overallRank === 1 ? 'text-yellow-600' : 'text-slate-900 group-hover:text-emerald-600'
                   }`}>
-                    <span className="text-xl">{Math.floor(runner.totalDistance)}</span>
+                    <span>{Math.floor(runner.totalDistance)}</span>
                     <span className="text-xs">.{(runner.totalDistance % 1).toFixed(2).split('.')[1]}</span>
-                  </div>
-                  <span className="text-[10px] font-black text-slate-300 ml-1">KM</span>
+                  </span>
+                  <span translate="no" className="notranslate text-[10px] font-black text-slate-300">KM</span>
                 </div>
               </motion.div>
             );

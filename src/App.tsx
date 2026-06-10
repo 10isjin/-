@@ -38,7 +38,7 @@ export default function App() {
             transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
             className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full mx-auto mb-4"
           />
-          <p className="text-slate-900 font-bold tracking-tight italic-header">갈매지구런</p>
+          <p translate="no" className="notranslate text-slate-900 font-bold tracking-tight italic-header">갈매지구런</p>
         </div>
       </div>
     );
@@ -55,7 +55,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Globe size={18} className="text-emerald-600" />
-            <h1 className="text-base font-black italic-header text-slate-900 tracking-tighter">갈매지구런</h1>
+            <h1 translate="no" className="notranslate text-base font-black italic-header text-slate-900 tracking-tighter">갈매지구런</h1>
           </div>
 
           <div className="flex items-center gap-4">
@@ -113,7 +113,7 @@ export default function App() {
               <div className="flex-1 min-w-0">
                 <h4 className="text-xs sm:text-sm font-black text-slate-800 flex items-center gap-1.5 uppercase tracking-wider">
                   <span className="inline-block w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
-                  갈매지구런 중요 참여 수칙 및 안내
+                  <span translate="no" className="notranslate">갈매지구런</span> 중요 참여 수칙 및 안내
                 </h4>
                 <div className="flex flex-col gap-2 mt-2 text-slate-600 font-medium text-xs">
                   <div className="flex items-start gap-1.5 leading-relaxed text-[11px] sm:text-xs">
@@ -174,11 +174,11 @@ export default function App() {
       </main>
 
       <footer className="py-24 bg-white text-center border-t border-emerald-50 mt-20 px-6">
-        <p className="text-3xl md:text-5xl font-black italic-header text-slate-900 mb-6 tracking-tighter leading-tight">
+        <p translate="no" className="notranslate text-3xl md:text-5xl font-black italic-header text-slate-900 mb-6 tracking-tighter leading-tight">
           "갈매의 발걸음을 모아 <br className="md:hidden" /> 내일의 지구를 뛰게하라"
         </p>
         <div className="w-16 h-1.5 bg-emerald-600 rounded-full mx-auto mb-10" />
-        <p className="text-[11px] font-black uppercase tracking-[0.5em] text-slate-400">
+        <p translate="no" className="notranslate text-[11px] font-black uppercase tracking-[0.5em] text-slate-400">
           갈매중학교 체육 교육 프로젝트
         </p>
       </footer>

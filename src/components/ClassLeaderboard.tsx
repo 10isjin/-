@@ -101,7 +101,7 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
               
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className={`font-black text-lg italic-header ${
+                  <span translate="no" className={`notranslate font-black text-lg italic-header ${
                     index === 0 ? 'text-yellow-700' : 'text-slate-900'
                   }`}>
                     {cls.grade}학년 {cls.classNumber}반
@@ -120,14 +120,14 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
                 </div>
               </div>
               
-              <div className="text-right shrink-0">
-                <div className={`font-black number-font tracking-tighter ${
+              <div className="text-right shrink-0 flex items-baseline justify-end gap-1">
+                <span translate="no" className={`notranslate font-black number-font tracking-tighter text-2xl ${
                   index === 0 ? 'text-yellow-600' : 'text-emerald-600'
                 }`}>
-                  <span className="text-2xl">{Math.floor(cls.totalDistance)}</span>
+                  <span>{Math.floor(cls.totalDistance)}</span>
                   <span className="text-sm">.{(cls.totalDistance % 1).toFixed(2).split('.')[1]}</span>
-                </div>
-                <span className="text-[10px] font-black text-slate-300 ml-1">KM</span>
+                </span>
+                <span translate="no" className="notranslate text-[10px] font-black text-slate-300">KM</span>
               </div>
             </motion.div>
           ))}
@@ -159,7 +159,7 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
             >
               <div className="bg-emerald-600 p-8 text-white flex justify-between items-start">
                 <div>
-                  <h3 className="text-3xl font-black italic-header tracking-tighter">
+                  <h3 translate="no" className="notranslate text-3xl font-black italic-header tracking-tighter">
                     {selectedClass.grade}학년 {selectedClass.classNumber}반
                   </h3>
                   <div className="flex items-center gap-4 mt-2">
@@ -211,18 +211,18 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
                           <div className="flex items-center gap-4">
                             <span className="w-6 text-[10px] font-black text-slate-300 group-hover:text-emerald-400">{idx + 1}</span>
                             <div className="flex-1 min-w-0">
-                              <p className="font-bold text-slate-900 leading-tight group-hover:text-emerald-700 transition-colors">{member.displayName}</p>
-                              <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                              <p translate="no" className="notranslate font-bold text-slate-900 leading-tight group-hover:text-emerald-700 transition-colors">{member.displayName}</p>
+                              <p translate="no" className="notranslate text-[9px] font-black uppercase tracking-widest text-slate-400">
                                 {member.role === 'student' ? '학생' : member.role === 'teacher' ? '교사' : '일반'}
                               </p>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <div className="font-black text-emerald-600 number-font tracking-tighter">
-                              <span className="text-lg">{Math.floor(member.totalDistance)}</span>
+                          <div className="text-right flex items-baseline gap-1 shrink-0">
+                            <span translate="no" className="notranslate font-black text-emerald-600 number-font tracking-tighter text-lg">
+                              <span>{Math.floor(member.totalDistance)}</span>
                               <span className="text-xs">.{(member.totalDistance % 1).toFixed(2).split('.')[1]}</span>
-                            </div>
-                            <p className="text-[9px] font-black text-slate-300 uppercase">KM</p>
+                            </span>
+                            <span translate="no" className="notranslate text-[9px] font-black text-slate-300 uppercase">KM</span>
                           </div>
                         </div>
                       ))}
