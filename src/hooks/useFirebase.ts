@@ -363,13 +363,18 @@ export function useFirebase() {
         userUpdates[rawId].runCount += count;
       }
 
-      // Special handling for Lee Joo-young (1-10 담임): Always add +17.78 km to her csv-provided distance
+      // Special handling for Lee Joo-young (1-10 담임) and Oh Yu-jin (2-13 담임)
       for (const [userId, update] of Object.entries(userUpdates)) {
         const isLeeJooYoung = update.displayName.includes('이주영') && 
           (update.displayName.includes('1-10') || update.classId === '1-10' || userId === '이주영');
         
+        const isOhYuJin = update.displayName.includes('오유진') && 
+          (update.displayName.includes('2-13') || update.classId === '2-13' || userId === '오유진');
+        
         if (isLeeJooYoung) {
           update.totalDistance = Number((update.totalDistance + 17.78).toFixed(2));
+        } else if (isOhYuJin) {
+          update.totalDistance = Number((update.totalDistance + 92.13).toFixed(2));
         }
       }
 
