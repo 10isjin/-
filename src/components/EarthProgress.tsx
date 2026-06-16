@@ -21,11 +21,12 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
   const elapsedDays = Math.max(1, Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1);
   
   const endDay = new Date(END_DATE.getFullYear(), END_DATE.getMonth(), END_DATE.getDate());
-  const remainingTime = endDay.getTime() - currentDay.getTime();
-  const remainingDays = Math.max(1, Math.round(remainingTime / (1000 * 60 * 60 * 24)));
+  const remainingDays = Math.max(0, Math.round((endDay.getTime() - currentDay.getTime()) / (1000 * 60 * 60 * 24)) + 1);
 
   const dailyAverageActual = currentDistance / elapsedDays;
-  const dailyAverageRequired = Math.max(0, (CHALLENGE_GOAL - currentDistance) / remainingDays);
+  const dailyAverageRequired = remainingDays > 0 ? Math.max(0, (CHALLENGE_GOAL - currentDistance) / remainingDays) : 0;
+
+  const dDayText = remainingDays > 0 ? `D-${remainingDays}` : '챌린지 종료';
 
   return (
     <div className="relative w-full max-w-4xl mx-auto pt-12 pb-8 px-4">
@@ -65,6 +66,16 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
             갈매지구런 <Globe className="w-[0.8em] h-[0.8em] text-emerald-500 animate-pulse" />
           </span>
         </h2>
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+          className="my-6 select-none"
+        >
+          <span translate="no" className={`notranslate font-black number-font tracking-tighter block ${remainingDays > 0 ? 'text-6xl md:text-8xl text-emerald-600 drop-shadow-sm' : 'text-4xl md:text-6xl text-slate-400'}`}>
+            {dDayText}
+          </span>
+        </motion.div>
         <p className="text-slate-400 max-w-lg mx-auto text-sm md:text-lg font-medium leading-relaxed">
           갈매지구 40,075km 달성 챌린지. <br />
           우리가 함께 뛰는 오늘이 <br className="md:hidden" />지구의 내일이 됩니다.
@@ -149,7 +160,15 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
           <div className="absolute top-0 right-0 w-12 h-12 bg-emerald-500/10 rounded-full -mr-6 -mt-6 blur-xl" />
           <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-0.5">진행 현황</p>
           <p className="text-xs font-bold text-emerald-400">
-            {elapsedDays}일차 <span className="text-slate-500 text-[10px] mx-0.5">/</span> 남은 {remainingDays}일
+            {remainingDays > 0 ? (
+              <>
+                {elapsedDays}일차 <span className="text-slate-500 text-[10px] mx-0.5">/</span> 남은 {remainingDays}일
+              </>
+            ) : (
+              <>
+                {elapsedDays}일차 <span className="text-slate-500 text-[10px] mx-0.5">/</span> 챌린지 종료
+              </>
+            )}
           </p>
         </div>
 
