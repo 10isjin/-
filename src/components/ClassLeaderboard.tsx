@@ -167,9 +167,10 @@ export default function ClassLeaderboard({ classes, getClassMembers }: ClassLead
                       <Users size={12} />
                       {selectedClass.participantCount} 명 참여
                     </div>
-                    <div className="flex items-center gap-1.5 text-emerald-100 text-[10px] font-black uppercase tracking-widest">
-                      <Trophy size={12} />
-                      {selectedClass.totalDistance.toFixed(2)} KM
+                    <div translate="no" className="notranslate flex items-center gap-1 text-emerald-100 text-[10px] font-black uppercase tracking-widest">
+                      <Trophy size={12} className="mr-0.5" />
+                      <span>{Math.floor(selectedClass.totalDistance).toLocaleString()}</span>
+                      <span className="text-[8px]">.{(selectedClass.totalDistance % 1).toFixed(2).split('.')[1]}</span> KM
                     </div>
                   </div>
                 </div>

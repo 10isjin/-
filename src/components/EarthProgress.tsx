@@ -25,6 +25,7 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
 
   const dailyAverageActual = currentDistance / elapsedDays;
   const dailyAverageRequired = remainingDays > 0 ? Math.max(0, (CHALLENGE_GOAL - currentDistance) / remainingDays) : 0;
+  const remainingDistance = Math.max(0, CHALLENGE_GOAL - currentDistance);
 
   const dDayText = remainingDays > 0 ? `D-${remainingDays}` : '챌린지 종료';
 
@@ -102,7 +103,11 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
             </div>
             <div className="text-right">
               <p className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-1">현재</p>
-              <p className="text-xl font-bold text-emerald-600 number-font">{currentDistance.toLocaleString()} <span className="text-sm text-emerald-300">km</span></p>
+              <p translate="no" className="notranslate text-xl font-bold text-emerald-600 number-font">
+                <span>{Math.floor(currentDistance).toLocaleString()}</span>
+                <span className="text-xs">.{(currentDistance % 1).toFixed(2).split('.')[1]}</span>{' '}
+                <span className="text-sm text-emerald-300">km</span>
+              </p>
             </div>
           </div>
         </div>
@@ -177,8 +182,10 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
           <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5 flex items-center gap-1.5">
             <ArrowRight size={10} className="text-emerald-500" /> 남은 거리
           </p>
-          <p className="text-lg font-black number-font text-slate-900">
-            {(CHALLENGE_GOAL - currentDistance).toLocaleString()} <span className="text-[10px] text-slate-400 font-medium">km</span>
+          <p translate="no" className="notranslate text-lg font-black number-font text-slate-900 flex items-baseline">
+            <span>{Math.floor(remainingDistance).toLocaleString()}</span>
+            <span className="text-[10px]">.{(remainingDistance % 1).toFixed(2).split('.')[1]}</span>
+            <span className="text-[10px] text-slate-400 font-medium ml-1">km</span>
           </p>
         </div>
 
@@ -187,8 +194,10 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
           <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5 flex items-center gap-1.5">
             <TrendingUp size={10} className="text-emerald-500" /> 현재 일평균
           </p>
-          <p className="text-lg font-black number-font text-emerald-600">
-            {dailyAverageActual.toFixed(2)} <span className="text-[10px] font-medium ml-0.5">km</span>
+          <p translate="no" className="notranslate text-lg font-black number-font text-emerald-600 flex items-baseline">
+            <span>{Math.floor(dailyAverageActual).toLocaleString()}</span>
+            <span className="text-[10px]">.{(dailyAverageActual % 1).toFixed(2).split('.')[1]}</span>
+            <span className="text-[10px] font-medium ml-1">km</span>
           </p>
         </div>
 
@@ -197,8 +206,10 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
           <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5 flex items-center gap-1.5">
             <Target size={10} className="text-orange-500" /> 목표 일평균
           </p>
-          <p className="text-lg font-black number-font text-orange-600">
-            {dailyAverageRequired.toFixed(2)} <span className="text-[10px] font-medium ml-0.5">km</span>
+          <p translate="no" className="notranslate text-lg font-black number-font text-orange-600 flex items-baseline">
+            <span>{Math.floor(dailyAverageRequired).toLocaleString()}</span>
+            <span className="text-[10px]">.{(dailyAverageRequired % 1).toFixed(2).split('.')[1]}</span>
+            <span className="text-[10px] font-medium ml-1">km</span>
           </p>
         </div>
       </div>
