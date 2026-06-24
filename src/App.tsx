@@ -20,7 +20,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
-  const { user, profile, globalStats, recentRuns, topRunners, topClasses, loading, getClassMembers, trackVisit } = useFirebase();
+  const { user, profile, globalStats, recentRuns, topRunners, topClasses, loading, logoBase64, getClassMembers, trackVisit } = useFirebase();
   const [isAdminView, setIsAdminView] = useState(false);
 
   useEffect(() => {
@@ -100,6 +100,7 @@ export default function App() {
           <EarthProgress 
             currentDistance={globalStats?.totalDistance || 0} 
             lastUpdated={globalStats?.lastUpdated ? globalStats.lastUpdated.toDate() : null}
+            logoBase64={logoBase64}
           />
         </section>
 

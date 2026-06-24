@@ -1,13 +1,14 @@
 import { motion } from 'motion/react';
 import { CHALLENGE_GOAL, START_DATE, END_DATE } from '../types';
-import { Globe, ArrowRight, Zap, Clock, TrendingUp, Target } from 'lucide-react';
+import { Globe, ArrowRight, Zap, Clock, TrendingUp, Target, Image as ImageIcon } from 'lucide-react';
 
 interface EarthProgressProps {
   currentDistance: number;
   lastUpdated: Date | null;
+  logoBase64?: string | null;
 }
 
-export default function EarthProgress({ currentDistance, lastUpdated }: EarthProgressProps) {
+export default function EarthProgress({ currentDistance, lastUpdated, logoBase64 }: EarthProgressProps) {
   const percentage = Math.min((currentDistance / CHALLENGE_GOAL) * 100, 100);
   
   // Date Calculations (Based on Calendar Days)
@@ -81,6 +82,29 @@ export default function EarthProgress({ currentDistance, lastUpdated }: EarthPro
           갈매지구 40,075km 달성 챌린지. <br />
           우리가 함께 뛰는 오늘이 <br className="md:hidden" />지구의 내일이 됩니다.
         </p>
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+          className="my-8 flex justify-center"
+        >
+          {logoBase64 ? (
+            <img 
+              src={logoBase64} 
+              alt="갈매지구런 공식 로고" 
+              className="w-72 h-72 sm:w-96 sm:h-96 md:w-[450px] md:h-[450px] object-contain rounded-full shadow-[0_10px_35px_-10px_rgba(16,185,129,0.3)] border-4 border-emerald-100/50 bg-white hover:scale-105 transition-transform duration-300"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="w-72 h-72 sm:w-96 sm:h-96 md:w-[450px] md:h-[450px] rounded-full shadow-[0_10px_35px_-10px_rgba(16,185,129,0.3)] border-4 border-dashed border-emerald-200 bg-emerald-50/50 flex flex-col items-center justify-center p-8 text-center hover:scale-105 transition-transform duration-300">
+              <ImageIcon className="w-12 h-12 text-emerald-500 mb-4 animate-bounce" />
+              <h4 className="text-lg font-black text-emerald-800 mb-2">공식 로고를 등록해주세요</h4>
+              <p className="text-xs text-emerald-600/80 max-w-xs leading-relaxed">
+                우측 상단의 <strong className="text-emerald-700 font-bold">관리자 로그인</strong> 후 <strong className="text-emerald-700 font-bold">관리자 콘솔</strong>에서 공식 로고 이미지를 마우스 클릭 한 번으로 아주 쉽고 편리하게 등록하실 수 있습니다!
+              </p>
+            </div>
+          )}
+        </motion.div>
       </div>
 
       <div className="glass-card rounded-[2.5rem] p-6 md:p-10 relative overflow-hidden bg-white/80 border-emerald-100">

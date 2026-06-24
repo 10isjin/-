@@ -74,7 +74,19 @@ export function useFirebase() {
   const [topRunners, setTopRunners] = useState<UserProfile[]>([]);
   const [topClasses, setTopClasses] = useState<ClassProfile[]>([]);
   const [visitorStats, setVisitorStats] = useState<VisitorStats | null>(null);
+  const [logoBase64, setLogoBase64] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Logo Settings Listener
+  useEffect(() => {
+    const settingsDoc = doc(db, 'globalStats', 'settings');
+    const unsub = onSnapshot(settingsDoc, (snap) => {
+      if (snap.exists()) {
+        setLogoBase64(snap.data().logoBase64 || null);
+      }
+    }, (err) => handleFirestoreError(err, OperationType.GET, 'globalStats/settings'));
+    return unsub;
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -507,6 +519,19 @@ export function useFirebase() {
     }
   };
 
+  const updateLogo = async (base64: string) => {
+    if (!user || user.email !== "yelloboll@goedu.kr") throw new Error("Unauthorized");
+    try {
+      const settingsDoc = doc(db, 'globalStats', 'settings');
+      await setDoc(settingsDoc, {
+        logoBase64: base64,
+        updatedAt: Timestamp.now()
+      }, { merge: true });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'globalStats/settings');
+    }
+  };
+
   return {
     user,
     profile,
@@ -516,6 +541,8 @@ export function useFirebase() {
     topClasses,
     visitorStats,
     loading,
+    logoBase64,
+    updateLogo,
     getClassMembers,
     bulkUpdateFromCSV,
     trackVisit
