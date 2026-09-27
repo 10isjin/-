@@ -1,0 +1,6 @@
+{
+  "name": "스타워즈: 코트 위의 역습",
+  "description": "농구 슛 자세 상호 피드백 및 AI 맞춤 분석 체육 수업 웹 애플리케이션 (수행자·관찰자·학급현황·교사 관제센터)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

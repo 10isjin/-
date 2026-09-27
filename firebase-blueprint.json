@@ -1,0 +1,50 @@
+{
+  "entities": {
+    "AppState": {
+      "title": "AppState",
+      "description": "Global persistent state of basketball shooting peer feedback app including classes, students, feedbacks, questions, and answers",
+      "type": "object",
+      "properties": {
+        "classes": {
+          "type": "array",
+          "description": "List of classrooms (grade and class number)"
+        },
+        "students": {
+          "type": "array",
+          "description": "List of enrolled students by class"
+        },
+        "feedbacks": {
+          "type": "array",
+          "description": "List of peer and teacher evaluation feedbacks"
+        },
+        "aiEvaluations": {
+          "type": "object",
+          "description": "Cached Gemini AI comprehensive evaluations per performer"
+        },
+        "teacherQuestions": {
+          "type": "object",
+          "description": "Daily thinking questions posted by teacher per class"
+        },
+        "studentAnswers": {
+          "type": "object",
+          "description": "Daily question answers submitted by students"
+        },
+        "gameScores": {
+          "type": "array",
+          "description": "Leaderboard game scores from the buzzer beater arcade game mode"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Timestamp of the last update"
+        }
+      },
+      "required": ["classes", "students", "feedbacks"]
+    }
+  },
+  "firestore": {
+    "/app_state/{stateId}": {
+      "schema": "AppState",
+      "description": "Stores the central persistent application data and roster"
+    }
+  }
+}
