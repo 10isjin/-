@@ -17,114 +17,213 @@ import { PerformerMode } from './components/PerformerMode';
 import { ObserverMode } from './components/ObserverMode';
 import { OverviewMode } from './components/OverviewMode';
 import { TeacherMode } from './components/TeacherMode';
-import { GameMode } from './components/GameMode';
-import { saveStateToFirestore, fetchStateFromFirestore } from './lib/firebase';
+import { saveStateToFirestore, fetchStateFromFirestore, subscribeToFirestoreState } from './lib/firebase';
+import { getDefaultAppState, getDefaultClasses, getDefaultStudents } from './lib/defaultData';
+import { generateClientAiFeedback } from './lib/clientAiEvaluation';
+
+// Helper to parse roster text into student objects (client fallback)
+function parseStudentRosterClient(rawText: string, classId: string): Student[] {
+  const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const students: Student[] = [];
+  lines.forEach((line, idx) => {
+    const parts = line.split(/[\t, ]+/).filter(Boolean);
+    if (parts.length >= 2) {
+      const numCandidate = parseInt(parts[0], 10);
+      if (!isNaN(numCandidate)) {
+        students.push({
+          id: `s_${classId}_${numCandidate}_${Date.now()}_${idx}`,
+          classId,
+          number: numCandidate,
+          name: parts.slice(1).join(' ')
+        });
+        return;
+      }
+    }
+    if (parts.length === 1 && isNaN(Number(parts[0]))) {
+      students.push({
+        id: `s_${classId}_${idx + 1}_${Date.now()}`,
+        classId,
+        number: idx + 1,
+        name: parts[0]
+      });
+    }
+  });
+  return students;
+}
+
+// Helper to parse whole-school roster text (client fallback)
+function parseAllClassesRosterClient(rawText: string, classes: Classroom[]): { newStudents: Student[]; newClasses: Classroom[] } {
+  const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const students: Student[] = [];
+  const classMap = new Map<string, string>();
+  classes.forEach(c => {
+    classMap.set(c.id, c.id);
+    classMap.set(c.name, c.id);
+    const match = c.name.match(/(\d+)반/);
+    if (match) classMap.set(`${match[1]}반`, c.id);
+  });
+
+  const updatedClasses = [...classes];
+  let currentClassId = classes[0]?.id || '3-1';
+
+  lines.forEach((line, idx) => {
+    const sectionMatch = line.match(/^\[?(\d+)학년\s*(\d+)반\]?/) || line.match(/^\[?(\d+)반\]?/);
+    if (sectionMatch && line.length <= 15) {
+      const classNum = sectionMatch[2] || sectionMatch[1];
+      const targetId = `3-${classNum}`;
+      if (!updatedClasses.some(c => c.id === targetId)) {
+        updatedClasses.push({ id: targetId, name: `3학년 ${classNum}반` });
+      }
+      currentClassId = targetId;
+      return;
+    }
+
+    const parts = line.split(/[\t, ]+/).filter(Boolean);
+    if (parts.length >= 3) {
+      const classCandidate = parts[0];
+      const numCandidate = parseInt(parts[1], 10);
+      const nameCandidate = parts.slice(2).join(' ');
+      if (!isNaN(numCandidate) && nameCandidate) {
+        const foundId = classMap.get(classCandidate) || (classCandidate.includes('반') ? `3-${classCandidate.replace(/[^0-9]/g, '')}` : currentClassId);
+        students.push({
+          id: `s_${foundId}_${numCandidate}_${Date.now()}_${idx}`,
+          classId: foundId,
+          number: numCandidate,
+          name: nameCandidate
+        });
+        return;
+      }
+    }
+
+    if (parts.length >= 2) {
+      const numCandidate = parseInt(parts[0], 10);
+      if (!isNaN(numCandidate)) {
+        students.push({
+          id: `s_${currentClassId}_${numCandidate}_${Date.now()}_${idx}`,
+          classId: currentClassId,
+          number: numCandidate,
+          name: parts.slice(1).join(' ')
+        });
+      }
+    }
+  });
+
+  return { newStudents: students, newClasses: updatedClasses };
+}
 
 export default function App() {
   const [currentMode, setCurrentMode] = useState<AppMode>('home');
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
-  const [initialLoading, setInitialLoading] = useState<boolean>(true);
+  const [initialLoading, setInitialLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // App core state
-  const [appState, setAppState] = useState<AppStateData>({
-    classes: [],
-    students: [],
-    feedbacks: [],
-    aiEvaluations: {}
+  // App core state: initialize with localStorage or default 11 classes immediately
+  const [appState, setAppState] = useState<AppStateData>(() => {
+    try {
+      const cached = localStorage.getItem('shootingstar_full_backup');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && Array.isArray(parsed.classes) && parsed.classes.length > 0) {
+          return {
+            classes: parsed.classes,
+            students: Array.isArray(parsed.students) ? parsed.students : [],
+            feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks : [],
+            aiEvaluations: parsed.aiEvaluations || {},
+            teacherQuestions: parsed.teacherQuestions || {},
+            studentAnswers: parsed.studentAnswers || {},
+            activeSessions: parsed.activeSessions || {}
+          };
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    return getDefaultAppState();
   });
-
-  // Flag to ensure auto-restore from cloud/local cache runs only once on initial boot
-  const initialSyncAttemptedRef = useRef<boolean>(false);
 
   // Fetch state from server with automatic Cloud Firestore / Local fallback
   const fetchState = useCallback(async (silent = false) => {
     if (!silent) setIsRefreshing(true);
     setErrorMessage(null);
+    let loadedFromServer = false;
+
+    // 1. Try Express server (/api/state) with timeout
     try {
-      const res = await fetch('/api/state');
-      if (!res.ok) throw new Error('서버 데이터를 불러오지 못했습니다.');
-      const data = await res.json();
-      if (data.success && data.data) {
-        const serverData = data.data;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const res = await fetch('/api/state', { signal: controller.signal });
+      clearTimeout(timeoutId);
 
-        // If server data is still the bare default (e.g. fresh container) and this is initial boot,
-        // check if Cloud Firestore or local browser backup has our actual saved roster!
-        if (!initialSyncAttemptedRef.current) {
-          initialSyncAttemptedRef.current = true;
-
-          // 1. Try Cloud Firestore first
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.data && Array.isArray(data.data.classes) && data.data.classes.length > 0) {
+          setAppState(data.data);
+          loadedFromServer = true;
           try {
-            const firestoreData = await fetchStateFromFirestore();
-            if (
-              firestoreData &&
-              Array.isArray(firestoreData.classes) &&
-              Array.isArray(firestoreData.students) &&
-              firestoreData.students.length > 0
-            ) {
-              console.log('[ShootingStar] Restored directly from Cloud Firestore!');
-              setAppState(firestoreData);
-              // Push to server as well so server memory & endpoints stay synced
-              fetch('/api/state/import', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(firestoreData)
-              }).catch(() => {});
-              return;
-            }
-          } catch (fsErr) {
-            console.warn('[ShootingStar] Firestore fetch on boot:', fsErr);
-          }
-
-          // 2. Try browser local storage backup if server has default 16 students
-          const isDefaultSeed =
-            serverData.students.length <= 16 &&
-            serverData.students.some((s: Student) => s.name === '강민준');
-
-          if (isDefaultSeed) {
-            try {
-              const cachedFull = localStorage.getItem('shootingstar_full_backup');
-              const cachedRoster = localStorage.getItem('shootingstar_roster_cache');
-              const parsed = cachedFull ? JSON.parse(cachedFull) : (cachedRoster ? JSON.parse(cachedRoster) : null);
-
-              if (parsed && Array.isArray(parsed.classes) && Array.isArray(parsed.students) && parsed.students.length > 0) {
-                // If the cached version has more students or is custom, auto restore!
-                console.log('[ShootingStar] Auto-restoring from browser backup cache to cloud & server...');
-                setAppState(parsed);
-                fetch('/api/state/import', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(parsed)
-                }).catch(() => {});
-                saveStateToFirestore(parsed).catch(() => {});
-                return;
-              }
-            } catch (e) {
-              // ignore cache parse error
-            }
-          }
+            localStorage.setItem('shootingstar_full_backup', JSON.stringify(data.data));
+          } catch (e) {}
         }
-
-        setAppState(serverData);
       }
-    } catch (err: any) {
-      console.error('Failed to load state:', err);
-      if (!silent) {
-        setErrorMessage(err.message || '네트워크 연결 상태를 확인해주세요.');
-      }
-    } finally {
-      if (!silent) setIsRefreshing(false);
-      setInitialLoading(false);
+    } catch {
+      // Server not reachable (e.g. Netlify static hosting)
     }
+
+    // 2. If server was not reachable (Netlify environment), use Cloud Firestore!
+    if (!loadedFromServer) {
+      try {
+        const firestoreData = await fetchStateFromFirestore();
+        if (
+          firestoreData &&
+          Array.isArray(firestoreData.classes) &&
+          firestoreData.classes.length > 0
+        ) {
+          setAppState({
+            classes: firestoreData.classes,
+            students: Array.isArray(firestoreData.students) ? firestoreData.students : [],
+            feedbacks: Array.isArray(firestoreData.feedbacks) ? firestoreData.feedbacks : [],
+            aiEvaluations: firestoreData.aiEvaluations || {},
+            teacherQuestions: firestoreData.teacherQuestions || {},
+            studentAnswers: firestoreData.studentAnswers || {},
+            activeSessions: firestoreData.activeSessions || {}
+          });
+          try {
+            localStorage.setItem('shootingstar_full_backup', JSON.stringify(firestoreData));
+          } catch (e) {}
+        } else {
+          // Firestore is empty on first boot -> seed Firestore with 11 classes!
+          const defaults = getDefaultAppState();
+          saveStateToFirestore(defaults).catch(() => {});
+        }
+      } catch (fsErr) {
+        console.warn('[ShootingStar] Firestore fetch error:', fsErr);
+      }
+    }
+
+    if (!silent) setIsRefreshing(false);
+    setInitialLoading(false);
   }, []);
 
+  // Real-time Firestore sync & initial fetch
   useEffect(() => {
-    fetchState();
+    fetchState(true);
 
-    // Periodic auto-refresh every 5 seconds so peer feedback and stars appear near real-time across devices
-    const interval = setInterval(() => {
-      fetchState(true);
-    }, 5000);
+    // Subscribe to Firestore for real-time peer feedback & star updates across Netlify / any client
+    const unsubscribe = subscribeToFirestoreState((data) => {
+      if (data && Array.isArray(data.classes) && data.classes.length > 0) {
+        setAppState({
+          classes: data.classes,
+          students: Array.isArray(data.students) ? data.students : [],
+          feedbacks: Array.isArray(data.feedbacks) ? data.feedbacks : [],
+          aiEvaluations: data.aiEvaluations || {},
+          teacherQuestions: data.teacherQuestions || {},
+          studentAnswers: data.studentAnswers || {},
+          activeSessions: data.activeSessions || {}
+        });
+        try {
+          localStorage.setItem('shootingstar_full_backup', JSON.stringify(data));
+        } catch (e) {}
+      }
+    });
 
     // Refresh immediately when returning to the tab or applet window
     const handleVisibility = () => {
@@ -136,13 +235,32 @@ export default function App() {
     window.addEventListener('focus', handleVisibility);
 
     return () => {
-      clearInterval(interval);
+      unsubscribe();
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
     };
   }, [fetchState]);
 
-  // Handler: Submit Feedback (Observer or Teacher) - Supports create, update, and session
+  // Client-side local backup to preserve complete state
+  useEffect(() => {
+    if (appState.classes.length > 0) {
+      try {
+        const fullBackup = {
+          classes: appState.classes,
+          students: appState.students,
+          feedbacks: appState.feedbacks,
+          aiEvaluations: appState.aiEvaluations,
+          teacherQuestions: appState.teacherQuestions,
+          studentAnswers: appState.studentAnswers,
+          activeSessions: appState.activeSessions,
+          savedAt: Date.now()
+        };
+        localStorage.setItem('shootingstar_full_backup', JSON.stringify(fullBackup));
+      } catch (e) {}
+    }
+  }, [appState]);
+
+  // Handler: Submit Feedback (Observer or Teacher)
   const handleSubmitFeedback = async (payload: {
     id?: string;
     feedbackId?: string;
@@ -159,250 +277,251 @@ export default function App() {
     comment: string;
     session?: number;
   }): Promise<boolean> => {
+    const feedbackId = payload.feedbackId || payload.id || `fb_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const newFeedback: FeedbackItem = {
+      id: feedbackId,
+      classId: payload.classId,
+      performerId: payload.performerId,
+      performerName: payload.performerName,
+      observerId: payload.observerId,
+      observerName: payload.observerName,
+      observerNumber: payload.observerNumber,
+      isTeacher: payload.isTeacher || false,
+      shotType: payload.shotType,
+      stars: payload.stars,
+      criteriaResults: payload.criteriaResults,
+      comment: payload.comment,
+      session: payload.session || 1,
+      timestamp: Date.now()
+    };
+
+    // Optimistically update local state & Cloud Firestore
+    setAppState(prev => {
+      const existsIndex = prev.feedbacks.findIndex(f => f.id === feedbackId);
+      let nextFeedbacks: FeedbackItem[];
+      if (existsIndex >= 0) {
+        nextFeedbacks = [...prev.feedbacks];
+        nextFeedbacks[existsIndex] = { ...prev.feedbacks[existsIndex], ...newFeedback, updatedAt: Date.now() };
+      } else {
+        nextFeedbacks = [newFeedback, ...prev.feedbacks];
+      }
+      const nextState = { ...prev, feedbacks: nextFeedbacks };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
+    // Try posting to backend server if available
     try {
-      const res = await fetch('/api/feedback', {
+      fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        console.warn('[Feedback] 등록 실패:', data?.message);
-        return false;
-      }
+      }).catch(() => {});
+    } catch {}
 
-      // Optimistically update or insert local feedbacks
-      setAppState(prev => {
-        const returnedFb: FeedbackItem = data.feedback;
-        const existsIndex = prev.feedbacks.findIndex(f => f.id === returnedFb.id);
-        let nextFeedbacks: FeedbackItem[];
-        if (existsIndex >= 0) {
-          nextFeedbacks = [...prev.feedbacks];
-          nextFeedbacks[existsIndex] = returnedFb;
-        } else {
-          nextFeedbacks = [returnedFb, ...prev.feedbacks];
-        }
-        const nextState = {
-          ...prev,
-          feedbacks: nextFeedbacks
-        };
-        saveStateToFirestore(nextState).catch(() => {});
-        return nextState;
-      });
-      return true;
-    } catch (err: any) {
-      console.error('[Feedback] 오류 발생:', err);
-      return false;
-    }
+    return true;
   };
 
   // Handler: Reward 1 star back to friend
   const handleRewardFeedback = async (feedbackId: string): Promise<boolean> => {
+    setAppState(prev => {
+      const nextState = {
+        ...prev,
+        feedbacks: prev.feedbacks.map(f =>
+          f.id === feedbackId ? { ...f, favoriteRewarded: true, favoriteRewardedAt: Date.now() } : f
+        )
+      };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
     try {
-      const res = await fetch(`/api/feedback/${feedbackId}/reward`, {
+      fetch(`/api/feedback/${feedbackId}/reward`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.message || '보답 별 전달에 실패했습니다.');
-        return false;
-      }
+      }).catch(() => {});
+    } catch {}
 
-      // Update local feedback
-      setAppState(prev => {
-        const nextState = {
-          ...prev,
-          feedbacks: prev.feedbacks.map(f => f.id === feedbackId ? { ...f, favoriteRewarded: true, favoriteRewardedAt: Date.now() } : f)
-        };
-        saveStateToFirestore(nextState).catch(() => {});
-        return nextState;
-      });
-      return true;
-    } catch (err: any) {
-      alert('보답 별 전달 중 오류: ' + err.message);
-      return false;
-    }
+    return true;
   };
 
-  // Handler: Cancel 1 reward star back to friend (보답 별 취소)
+  // Handler: Cancel 1 reward star back to friend
   const handleCancelRewardFeedback = async (feedbackId: string): Promise<boolean> => {
+    setAppState(prev => {
+      const nextFeedbacks = prev.feedbacks.map(f => {
+        if (f.id === feedbackId) {
+          const updated = { ...f, favoriteRewarded: false };
+          delete updated.favoriteRewardedAt;
+          return updated;
+        }
+        return f;
+      });
+      const nextState = { ...prev, feedbacks: nextFeedbacks };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
     try {
-      const res = await fetch(`/api/feedback/${feedbackId}/cancel-reward`, {
+      fetch(`/api/feedback/${feedbackId}/cancel-reward`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        console.warn('보답 별 취소 실패:', data.message);
-        return false;
-      }
+      }).catch(() => {});
+    } catch {}
 
-      // Update local feedback
-      setAppState(prev => {
-        const nextFeedbacks = prev.feedbacks.map(f => {
-          if (f.id === feedbackId) {
-            const updated = { ...f, favoriteRewarded: false };
-            delete updated.favoriteRewardedAt;
-            return updated;
-          }
-          return f;
-        });
-        const nextState = {
-          ...prev,
-          feedbacks: nextFeedbacks
-        };
-        saveStateToFirestore(nextState).catch(() => {});
-        return nextState;
-      });
-      return true;
-    } catch (err: any) {
-      console.warn('보답 별 취소 중 오류:', err);
-      return false;
-    }
+    return true;
   };
 
-  // Handler: Request Gemini AI comprehensive evaluation
+  // Handler: Request Gemini AI / Biomechanical coaching evaluation
   const handleRequestAiFeedback = async (
     performerId: string,
     performerName: string,
     shotType: ShotType
   ): Promise<AiEvaluation | null> => {
+    // 1. Try server Gemini AI route if running with server backend
     try {
       const res = await fetch('/api/ai-feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          performerId,
-          performerName,
-          shotType
-        })
+        body: JSON.stringify({ performerId, performerName, shotType })
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        console.warn('[AI Feedback] 요청 실패:', data?.message);
-        return null;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.evaluation) {
+          const evalData: AiEvaluation = data.evaluation;
+          const cacheKey = `${performerId}_${shotType}`;
+          setAppState(prev => {
+            const nextState = {
+              ...prev,
+              aiEvaluations: { ...prev.aiEvaluations, [cacheKey]: evalData }
+            };
+            saveStateToFirestore(nextState).catch(() => {});
+            return nextState;
+          });
+          return evalData;
+        }
       }
-
-      const evalData: AiEvaluation = data.evaluation;
-      const cacheKey = `${performerId}_${shotType}`;
-
-      setAppState(prev => {
-        const nextState = {
-          ...prev,
-          aiEvaluations: {
-            ...prev.aiEvaluations,
-            [cacheKey]: evalData
-          }
-        };
-        saveStateToFirestore(nextState).catch(() => {});
-        return nextState;
-      });
-
-      return evalData;
-    } catch (err: any) {
-      console.error('[AI Feedback] 생성 오류:', err);
-      return null;
+    } catch {
+      // Server not reachable (Netlify static hosting) -> fall through to client generator
     }
+
+    // 2. Client Biomechanical AI Engine Fallback (works 100% on Netlify and offline)
+    const matchingFeedbacks = appState.feedbacks.filter(
+      f => f.performerId === performerId && f.shotType === shotType
+    );
+    const clientEval = generateClientAiFeedback(performerId, performerName, shotType, matchingFeedbacks);
+    const cacheKey = `${performerId}_${shotType}`;
+
+    setAppState(prev => {
+      const nextState = {
+        ...prev,
+        aiEvaluations: { ...prev.aiEvaluations, [cacheKey]: clientEval }
+      };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
+    return clientEval;
   };
 
   // Handler: Add new classroom
   const handleAddClass = async (name: string): Promise<boolean> => {
+    const cleanName = name.trim();
+    if (!cleanName) return false;
+    const newId = `c_${Date.now()}`;
+    const newClass: Classroom = { id: newId, name: cleanName };
+
+    setAppState(prev => {
+      const nextState = { ...prev, classes: [...prev.classes, newClass] };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
     try {
-      const res = await fetch('/api/classes', {
+      fetch('/api/classes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.message || '학급 추가에 실패했습니다.');
-        return false;
-      }
+        body: JSON.stringify({ name: cleanName })
+      }).catch(() => {});
+    } catch {}
 
-      setAppState(prev => ({
-        ...prev,
-        classes: [...prev.classes, data.classroom]
-      }));
-      return true;
-    } catch (err: any) {
-      alert('학급 추가 실패: ' + err.message);
-      return false;
-    }
+    return true;
   };
 
   // Handler: Update classroom name
   const handleUpdateClass = async (id: string, name: string): Promise<boolean> => {
+    const cleanName = name.trim();
+    if (!cleanName) return false;
+
+    setAppState(prev => {
+      const nextState = {
+        ...prev,
+        classes: prev.classes.map(c => (c.id === id ? { ...c, name: cleanName } : c))
+      };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
     try {
-      const res = await fetch(`/api/classes/${id}`, {
+      fetch(`/api/classes/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.message || '학급 수정에 실패했습니다.');
-        return false;
-      }
+        body: JSON.stringify({ name: cleanName })
+      }).catch(() => {});
+    } catch {}
 
-      setAppState(prev => ({
-        ...prev,
-        classes: prev.classes.map(c => (c.id === id ? data.classroom : c))
-      }));
-      return true;
-    } catch (err: any) {
-      alert('학급 수정 실패: ' + err.message);
-      return false;
-    }
+    return true;
   };
 
   // Handler: Delete classroom
   const handleDeleteClass = async (id: string): Promise<boolean> => {
-    try {
-      const res = await fetch(`/api/classes/${id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.message || '학급 삭제에 실패했습니다.');
-        return false;
-      }
-
-      // Refresh or filter out deleted class, its students, and its feedbacks
-      setAppState(prev => ({
+    setAppState(prev => {
+      const nextState = {
         ...prev,
         classes: prev.classes.filter(c => c.id !== id),
         students: prev.students.filter(s => s.classId !== id),
         feedbacks: prev.feedbacks.filter(f => f.classId !== id)
-      }));
-      return true;
-    } catch (err: any) {
-      alert('학급 삭제 실패: ' + err.message);
-      return false;
-    }
+      };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
+    try {
+      fetch(`/api/classes/${id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(() => {});
+    } catch {}
+
+    return true;
   };
 
   // Handler: Batch register 3학년 1~11반
   const handleBatchCreateGrade3 = async (mode: 'append' | 'reset-classes' = 'append'): Promise<boolean> => {
+    const defaultGrade3 = getDefaultClasses();
+
+    setAppState(prev => {
+      let nextClasses: Classroom[];
+      if (mode === 'reset-classes') {
+        nextClasses = defaultGrade3;
+      } else {
+        const existingIds = new Set(prev.classes.map(c => c.id));
+        const missing = defaultGrade3.filter(c => !existingIds.has(c.id));
+        nextClasses = [...prev.classes, ...missing];
+      }
+      const nextState = { ...prev, classes: nextClasses };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
     try {
-      const res = await fetch('/api/classes/batch-grade3', {
+      fetch('/api/classes/batch-grade3', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.message || '3학년 1~11반 일괄 등록에 실패했습니다.');
-        return false;
-      }
+      }).catch(() => {});
+    } catch {}
 
-      await fetchState();
-      return true;
-    } catch (err: any) {
-      alert('3학년 1~11반 일괄 등록 실패: ' + err.message);
-      return false;
-    }
+    return true;
   };
 
   // Handler: Bulk upload students from Excel
@@ -411,68 +530,87 @@ export default function App() {
     rawText: string,
     mode: 'replace' | 'append'
   ): Promise<boolean> => {
+    const parsed = parseStudentRosterClient(rawText, classId);
+    if (parsed.length === 0) {
+      alert('등록할 수 있는 학생 정보를 찾지 못했습니다.');
+      return false;
+    }
+
+    setAppState(prev => {
+      let nextStudents: Student[];
+      if (mode === 'replace') {
+        nextStudents = [...prev.students.filter(s => s.classId !== classId), ...parsed];
+      } else {
+        nextStudents = [...prev.students, ...parsed];
+      }
+      // Sort by class and number
+      nextStudents.sort((a, b) => a.classId.localeCompare(b.classId) || a.number - b.number);
+      const nextState = { ...prev, students: nextStudents };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
     try {
-      const res = await fetch('/api/students/bulk', {
+      fetch('/api/students/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ classId, rawText, mode })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.message || '명렬표 등록에 실패했습니다.');
-        return false;
-      }
+      }).catch(() => {});
+    } catch {}
 
-      await fetchState();
-      return true;
-    } catch (err: any) {
-      alert('명렬표 등록 실패: ' + err.message);
-      return false;
-    }
+    return true;
   };
 
   // Handler: Add single student to a class
   const handleAddStudent = async (classId: string, number: number, name: string): Promise<boolean> => {
+    const cleanName = name.trim();
+    if (!cleanName) return false;
+    const newStudent: Student = {
+      id: `s_${classId}_${number}_${Date.now()}`,
+      classId,
+      number,
+      name: cleanName
+    };
+
+    setAppState(prev => {
+      const nextStudents = [...prev.students.filter(s => !(s.classId === classId && s.number === number)), newStudent];
+      nextStudents.sort((a, b) => a.classId.localeCompare(b.classId) || a.number - b.number);
+      const nextState = { ...prev, students: nextStudents };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
     try {
-      const res = await fetch('/api/students', {
+      fetch('/api/students', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ classId, number, name })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.message || '학생 등록에 실패했습니다.');
-        return false;
-      }
-      await fetchState();
-      return true;
-    } catch (err: any) {
-      alert('학생 등록 실패: ' + err.message);
-      return false;
-    }
+        body: JSON.stringify({ classId, number, name: cleanName })
+      }).catch(() => {});
+    } catch {}
+
+    return true;
   };
 
   // Handler: Delete single student
   const handleDeleteStudent = async (id: string): Promise<boolean> => {
+    setAppState(prev => {
+      const nextState = {
+        ...prev,
+        students: prev.students.filter(s => s.id !== id),
+        feedbacks: prev.feedbacks.filter(f => f.performerId !== id && f.observerId !== id)
+      };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
     try {
-      const res = await fetch(`/api/students/${id}`, {
+      fetch(`/api/students/${id}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' }
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.message || '학생 삭제에 실패했습니다.');
-        return false;
-      }
-      setAppState(prev => ({
-        ...prev,
-        students: prev.students.filter(s => s.id !== id)
-      }));
-      return true;
-    } catch (err: any) {
-      alert('학생 삭제 실패: ' + err.message);
-      return false;
-    }
+      }).catch(() => {});
+    } catch {}
+
+    return true;
   };
 
   // Handler: Bulk upload students across ALL classes (1~11반)
@@ -480,168 +618,135 @@ export default function App() {
     rawText: string,
     mode: 'replace-all' | 'append'
   ): Promise<{ success: boolean; count?: number; message?: string }> => {
+    const { newStudents, newClasses } = parseAllClassesRosterClient(rawText, appState.classes);
+    if (newStudents.length === 0) {
+      alert('유효한 학생 명렬을 찾지 못했습니다. [학급 번호 이름] 형식으로 입력해주세요.');
+      return { success: false, message: '유효한 학생 명렬을 찾지 못했습니다.' };
+    }
+
+    setAppState(prev => {
+      let finalStudents: Student[];
+      if (mode === 'replace-all') {
+        finalStudents = newStudents;
+      } else {
+        finalStudents = [...prev.students, ...newStudents];
+      }
+      finalStudents.sort((a, b) => a.classId.localeCompare(b.classId) || a.number - b.number);
+      const nextState = { ...prev, classes: newClasses, students: finalStudents };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
     try {
-      const res = await fetch('/api/students/bulk-all-classes', {
+      fetch('/api/students/bulk-all-classes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rawText, mode })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.message || '전체 학급 명렬 일괄 등록에 실패했습니다.');
-        return { success: false, message: data.message };
-      }
+      }).catch(() => {});
+    } catch {}
 
-      await fetchState();
-      return { success: true, count: data.addedCount, message: data.message };
-    } catch (err: any) {
-      alert('전체 학급 명렬 등록 실패: ' + err.message);
-      return { success: false, message: err.message };
-    }
+    return { success: true, count: newStudents.length, message: `${newStudents.length}명의 학생이 성공적으로 등록되었습니다.` };
   };
 
   // Handler: Import full state / backup
   const handleImportState = async (
     importedData: { classes: Classroom[]; students: Student[]; feedbacks?: FeedbackItem[] }
   ): Promise<boolean> => {
+    setAppState(prev => {
+      const nextState = {
+        ...prev,
+        classes: importedData.classes || prev.classes,
+        students: importedData.students || prev.students,
+        feedbacks: importedData.feedbacks || prev.feedbacks
+      };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
     try {
-      const res = await fetch('/api/state/import', {
+      fetch('/api/state/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(importedData)
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.message || '데이터 복원에 실패했습니다.');
-        return false;
-      }
-      // Save directly to Cloud Firestore as well
-      saveStateToFirestore(importedData).catch(() => {});
-      await fetchState();
-      return true;
-    } catch (err: any) {
-      alert('데이터 복원 실패: ' + err.message);
-      return false;
-    }
+      }).catch(() => {});
+    } catch {}
+
+    return true;
   };
 
-  // Client-side local backup to preserve complete state (roster + feedbacks + stars) even across network or container incidents
-  useEffect(() => {
-    if (appState.students.length > 0 || appState.feedbacks.length > 0) {
-      try {
-        const fullBackup = {
-          classes: appState.classes,
-          students: appState.students,
-          feedbacks: appState.feedbacks,
-          aiEvaluations: appState.aiEvaluations,
-          teacherQuestions: appState.teacherQuestions,
-          studentAnswers: appState.studentAnswers,
-          activeSessions: appState.activeSessions,
-          savedAt: Date.now()
-        };
-        localStorage.setItem('shootingstar_full_backup', JSON.stringify(fullBackup));
-
-        // Also keep roster cache for compatibility
-        localStorage.setItem('shootingstar_roster_cache', JSON.stringify({
-          classes: appState.classes,
-          students: appState.students,
-          savedAt: Date.now()
-        }));
-
-        // Keep Cloud Firestore in sync
-        saveStateToFirestore(fullBackup).catch(() => {});
-      } catch (e) {
-        // ignore storage quota errors
-      }
-    }
-  }, [appState.classes, appState.students, appState.feedbacks, appState.aiEvaluations, appState.teacherQuestions, appState.studentAnswers, appState.activeSessions]);
-
-  // Handler: Save or reset teacher question for a specific class
+  // Handler: Save teacher question for a specific class
   const handleSaveTeacherQuestion = async (classId: string, question: string): Promise<boolean> => {
+    const cleanQ = (question || '').trim();
+
+    setAppState(prev => {
+      const nextQ = { ...(prev.teacherQuestions || {}) };
+      const nextAnswers = { ...(prev.studentAnswers || {}) };
+      if (cleanQ) {
+        nextQ[classId] = { classId, question: cleanQ, updatedAt: Date.now() };
+      } else {
+        delete nextQ[classId];
+        Object.keys(nextAnswers).forEach(key => {
+          if (nextAnswers[key]?.classId === classId || key.startsWith(`${classId}_`)) {
+            delete nextAnswers[key];
+          }
+        });
+      }
+      const updated = {
+        ...prev,
+        teacherQuestions: nextQ,
+        studentAnswers: nextAnswers
+      };
+      saveStateToFirestore(updated).catch(() => {});
+      return updated;
+    });
+
     try {
-      const cleanQ = (question || '').trim();
-      const res = await fetch(`/api/classes/${classId}/question`, {
+      fetch(`/api/classes/${classId}/question`, {
         method: cleanQ ? 'POST' : 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: cleanQ ? JSON.stringify({ question: cleanQ }) : undefined
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        console.error('Failed to process question:', data.message);
-        return false;
-      }
-      setAppState(prev => {
-        const nextQ = { ...(prev.teacherQuestions || {}) };
-        const nextAnswers = { ...(prev.studentAnswers || {}) };
-        if (cleanQ) {
-          nextQ[classId] = data.data;
-        } else {
-          delete nextQ[classId];
-          // Also clear student answers for this class
-          Object.keys(nextAnswers).forEach(key => {
-            if (nextAnswers[key]?.classId === classId || key.startsWith(`${classId}_`)) {
-              delete nextAnswers[key];
-            }
-          });
-        }
-        const updated = {
-          ...prev,
-          teacherQuestions: nextQ,
-          studentAnswers: nextAnswers
-        };
-        // Update browser cache immediately
-        try {
-          const fullBackup = {
-            classes: updated.classes,
-            students: updated.students,
-            feedbacks: updated.feedbacks,
-            aiEvaluations: updated.aiEvaluations,
-            teacherQuestions: updated.teacherQuestions,
-            studentAnswers: updated.studentAnswers,
-            activeSessions: updated.activeSessions,
-            savedAt: Date.now()
-          };
-          localStorage.setItem('shootingstar_full_backup', JSON.stringify(fullBackup));
-          saveStateToFirestore(fullBackup).catch(() => {});
-        } catch (e) {}
+      }).catch(() => {});
+    } catch {}
 
-        return updated;
-      });
-      // Synchronize with server
-      await fetchState(true);
-      return true;
-    } catch (err: any) {
-      console.error('Error in handleSaveTeacherQuestion:', err);
-      return false;
-    }
+    return true;
   };
 
   // Handler: Save student answer to teacher question
   const handleSaveStudentAnswer = async (classId: string, studentId: string, answer: string): Promise<boolean> => {
-    try {
-      const res = await fetch(`/api/classes/${classId}/students/${studentId}/answer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answer })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.message || '답변 저장에 실패했습니다.');
-        return false;
-      }
-      const answerKey = `${classId}_${studentId}`;
-      setAppState(prev => ({
+    const cleanA = (answer || '').trim();
+    const student = appState.students.find(s => s.id === studentId);
+    const answerKey = `${classId}_${studentId}`;
+    const newAnswer = {
+      id: `ans_${classId}_${studentId}`,
+      classId,
+      studentId,
+      studentName: student?.name || '',
+      studentNumber: student?.number || 1,
+      answer: cleanA,
+      updatedAt: Date.now()
+    };
+
+    setAppState(prev => {
+      const nextState = {
         ...prev,
         studentAnswers: {
           ...(prev.studentAnswers || {}),
-          [answerKey]: data.data
+          [answerKey]: newAnswer
         }
-      }));
-      return true;
-    } catch (err: any) {
-      alert('답변 저장 중 오류: ' + err.message);
-      return false;
-    }
+      };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
+    try {
+      fetch(`/api/classes/${classId}/students/${studentId}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answer: cleanA })
+      }).catch(() => {});
+    } catch {}
+
+    return true;
   };
 
   // Handler: Teacher submit feedback
@@ -665,90 +770,75 @@ export default function App() {
 
   // Handler: Delete single feedback
   const handleDeleteFeedback = async (id: string): Promise<boolean> => {
-    try {
-      const res = await fetch(`/api/feedback/${id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.message || '피드백 삭제에 실패했습니다.');
-        return false;
-      }
-      setAppState(prev => ({
+    setAppState(prev => {
+      const nextState = {
         ...prev,
         feedbacks: prev.feedbacks.filter(f => f.id !== id)
-      }));
-      return true;
-    } catch (err: any) {
-      alert('피드백 삭제 중 오류: ' + err.message);
-      return false;
-    }
+      };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
+    try {
+      fetch(`/api/feedback/${id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(() => {});
+    } catch {}
+
+    return true;
   };
 
   // Handler: Set active lesson session for a class
   const handleSetActiveSession = async (classId: string, session: number): Promise<boolean> => {
+    setAppState(prev => {
+      const nextState = {
+        ...prev,
+        activeSessions: {
+          ...(prev.activeSessions || {}),
+          [classId]: session
+        }
+      };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
     try {
-      const res = await fetch(`/api/classes/${classId}/active-session`, {
+      fetch(`/api/classes/${classId}/active-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        return false;
-      }
-      setAppState(prev => {
-        const next = {
-          ...prev,
-          activeSessions: {
-            ...(prev.activeSessions || {}),
-            [classId]: session
-          }
-        };
-        saveStateToFirestore(next).catch(() => {});
-        return next;
-      });
-      return true;
-    } catch {
-      return false;
-    }
+      }).catch(() => {});
+    } catch {}
+
+    return true;
   };
 
   // Handler: Batch set active lesson session across all or selected classes
   const handleBatchSetActiveSession = async (session: number, classIds?: string[]): Promise<boolean> => {
+    setAppState(prev => {
+      const nextSessions = { ...(prev.activeSessions || {}) };
+      const targets = classIds && classIds.length > 0 ? classIds : prev.classes.map(c => c.id);
+      targets.forEach(cId => {
+        nextSessions[cId] = session;
+      });
+      const nextState = { ...prev, activeSessions: nextSessions };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
     try {
-      const res = await fetch('/api/classes/batch-active-session', {
+      fetch('/api/classes/batch-active-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session, classIds })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        // Fallback to per-class
-        const targets = classIds && classIds.length > 0 ? classIds : appState.classes.map(c => c.id);
-        await Promise.all(targets.map(cId => handleSetActiveSession(cId, session)));
-        return true;
-      }
-      setAppState(prev => {
-        const nextSessions = { ...(prev.activeSessions || {}) };
-        const targets = classIds && classIds.length > 0 ? classIds : prev.classes.map(c => c.id);
-        targets.forEach(cId => {
-          nextSessions[cId] = session;
-        });
-        const next = { ...prev, activeSessions: nextSessions };
-        saveStateToFirestore(next).catch(() => {});
-        return next;
-      });
-      return true;
-    } catch {
-      const targets = classIds && classIds.length > 0 ? classIds : appState.classes.map(c => c.id);
-      await Promise.all(targets.map(cId => handleSetActiveSession(cId, session)));
-      return true;
-    }
+      }).catch(() => {});
+    } catch {}
+
+    return true;
   };
 
-  // Handler: Clear feedbacks (granular: by class, shotType, studentId, session)
+  // Handler: Clear feedbacks
   const handleClearFeedbacks = async (
     options?: {
       classId?: string;
@@ -758,144 +848,73 @@ export default function App() {
       clearAiEvaluations?: boolean;
     } | string
   ): Promise<{ success: boolean; message?: string; deletedCount?: number }> => {
-    try {
-      const payload = typeof options === 'string'
-        ? { classId: options, shotType: 'all', studentId: 'all', session: 'all', clearAiEvaluations: true }
-        : {
-            classId: options?.classId || 'all',
-            shotType: options?.shotType || 'all',
-            studentId: options?.studentId || 'all',
-            session: options?.session || 'all',
-            clearAiEvaluations: options?.clearAiEvaluations !== false
-          };
+    const payload = typeof options === 'string'
+      ? { classId: options, shotType: 'all', studentId: 'all', session: 'all', clearAiEvaluations: true }
+      : {
+          classId: options?.classId || 'all',
+          shotType: options?.shotType || 'all',
+          studentId: options?.studentId || 'all',
+          session: options?.session || 'all',
+          clearAiEvaluations: options?.clearAiEvaluations !== false
+        };
 
-      const res = await fetch('/api/feedback/clear', {
+    const isAllClasses = !payload.classId || payload.classId === 'all';
+    const isAllShots = !payload.shotType || payload.shotType === 'all';
+    const isAllStudents = !payload.studentId || payload.studentId === 'all';
+    const isAllSessions = !payload.session || payload.session === 'all';
+
+    let deleted = 0;
+    setAppState(prev => {
+      const updatedFeedbacks = prev.feedbacks.filter(f => {
+        const matchesClass = isAllClasses || f.classId === payload.classId;
+        const matchesShot = isAllShots || f.shotType === payload.shotType;
+        const matchesStudent = isAllStudents || f.performerId === payload.studentId || f.observerId === payload.studentId;
+        const matchesSession = isAllSessions || (f.session || 1) === Number(payload.session);
+        if (matchesClass && matchesShot && matchesStudent && matchesSession) {
+          deleted++;
+          return false;
+        }
+        return true;
+      });
+
+      const nextAiEvals = { ...(prev.aiEvaluations || {}) };
+      if (payload.clearAiEvaluations) {
+        if (isAllClasses && isAllShots && isAllStudents) {
+          Object.keys(nextAiEvals).forEach(k => delete nextAiEvals[k]);
+        }
+      }
+
+      const nextState = {
+        ...prev,
+        feedbacks: updatedFeedbacks,
+        aiEvaluations: nextAiEvals
+      };
+      saveStateToFirestore(nextState).catch(() => {});
+      return nextState;
+    });
+
+    try {
+      fetch('/api/feedback/clear', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        return { success: false, message: data.message || '피드백 초기화에 실패했습니다.' };
-      }
+      }).catch(() => {});
+    } catch {}
 
-      setAppState(prev => {
-        const isAllClasses = !payload.classId || payload.classId === 'all';
-        const isAllShots = !payload.shotType || payload.shotType === 'all';
-        const isAllStudents = !payload.studentId || payload.studentId === 'all';
-        const isAllSessions = !payload.session || payload.session === 'all';
-
-        const updatedFeedbacks = prev.feedbacks.filter(f => {
-          if (!isAllClasses && f.classId !== payload.classId) return true;
-          if (!isAllShots && f.shotType !== payload.shotType) return true;
-          if (!isAllStudents && f.performerId !== payload.studentId && f.observerId !== payload.studentId) return true;
-          if (!isAllSessions && (f.session || 1) !== Number(payload.session)) return true;
-          return false;
-        });
-
-        // Prune matching AI evaluation cache
-        const nextAiEvals = { ...(prev.aiEvaluations || {}) };
-        if (payload.clearAiEvaluations) {
-          if (isAllClasses && isAllShots && isAllStudents) {
-            Object.keys(nextAiEvals).forEach(k => delete nextAiEvals[k]);
-          } else {
-            Object.keys(nextAiEvals).forEach(cacheKey => {
-              const [pId, sType] = cacheKey.split('_');
-              const matchesClass = isAllClasses || (prev.students.find(s => s.id === pId)?.classId === payload.classId);
-              const matchesShot = isAllShots || sType === payload.shotType;
-              const matchesStudent = isAllStudents || pId === payload.studentId;
-              if (matchesClass && matchesShot && matchesStudent) {
-                delete nextAiEvals[cacheKey];
-              }
-            });
-          }
-        }
-
-        const nextState = {
-          ...prev,
-          feedbacks: updatedFeedbacks,
-          aiEvaluations: nextAiEvals
-        };
-
-        try {
-          const fullBackup = {
-            classes: nextState.classes,
-            students: nextState.students,
-            feedbacks: nextState.feedbacks,
-            aiEvaluations: nextState.aiEvaluations,
-            teacherQuestions: nextState.teacherQuestions,
-            studentAnswers: nextState.studentAnswers,
-            savedAt: Date.now()
-          };
-          localStorage.setItem('shootingstar_full_backup', JSON.stringify(fullBackup));
-          saveStateToFirestore(fullBackup).catch(() => {});
-        } catch (e) {}
-
-        return nextState;
-      });
-
-      await fetchState(true);
-      return { success: true, message: data.message, deletedCount: data.deletedCount };
-    } catch (err: any) {
-      return { success: false, message: err.message || '피드백 초기화 중 오류가 발생했습니다.' };
-    }
+    return { success: true, message: `${deleted}건의 피드백이 초기화되었습니다.`, deletedCount: deleted };
   };
 
   // Handler: Reset sample data
   const handleResetData = async (): Promise<boolean> => {
-    try {
-      const res = await fetch('/api/reset', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        await fetchState();
-        return true;
-      }
-      return false;
-    } catch (err: any) {
-      alert('초기화 실패: ' + err.message);
-      return false;
-    }
-  };
+    const defaults = getDefaultAppState();
+    setAppState(defaults);
+    saveStateToFirestore(defaults).catch(() => {});
 
-  // Handler: Save game score (별빛 버저비터 게임 모드)
-  const handleSaveGameScore = async (payload: {
-    studentId?: string;
-    studentName: string;
-    studentNumber?: number;
-    classId?: string;
-    className?: string;
-    score: number;
-    totalShots: number;
-    madeShots: number;
-    perfectCount: number;
-    maxCombo: number;
-    shotTypesBreakdown?: {
-      middleMade: number;
-      middleTotal: number;
-      layupMade: number;
-      layupTotal: number;
-    };
-  }) => {
     try {
-      const res = await fetch('/api/game/scores', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (data.success && data.item) {
-        setAppState(prev => {
-          const nextScores = [...(prev.gameScores || []), data.item];
-          const nextState = { ...prev, gameScores: nextScores };
-          saveStateToFirestore(nextState).catch(() => {});
-          return nextState;
-        });
-        return data;
-      }
-    } catch (err) {
-      console.error('Failed to save game score:', err);
-    }
-    return null;
+      fetch('/api/reset', { method: 'POST' }).catch(() => {});
+    } catch {}
+
+    return true;
   };
 
   return (
@@ -932,26 +951,6 @@ export default function App() {
               학급 데이터와 피드백 정보를 불러오고 있습니다. 잠시만 기다려주세요.
             </p>
           </div>
-        ) : errorMessage && appState.classes.length === 0 ? (
-          <div className="max-w-sm mx-auto my-16 p-6 rounded-2xl bg-slate-900/90 border border-rose-500/30 text-center space-y-4 shadow-xl">
-            <div className="w-12 h-12 mx-auto rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
-              <AlertCircle className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-white mb-1">데이터 연결이 지연되고 있습니다</h3>
-              <p className="text-xs text-slate-400">
-                학교 무선 인터넷(Wi-Fi) 연결을 확인한 후 아래 버튼을 눌러주세요.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => fetchState()}
-              className="w-full py-3 px-4 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer shadow-md"
-            >
-              <RefreshCw className="w-4 h-4" />
-              다시 연결하기
-            </button>
-          </div>
         ) : (
           <>
             {currentMode === 'home' && (
@@ -959,15 +958,6 @@ export default function App() {
                 onSelectMode={setCurrentMode}
                 totalFeedbacks={appState.feedbacks.length}
                 totalStudents={appState.students.length}
-              />
-            )}
-
-            {currentMode === 'game' && (
-              <GameMode
-                classes={appState.classes}
-                students={appState.students}
-                gameScores={appState.gameScores}
-                onSaveScore={handleSaveGameScore}
               />
             )}
 

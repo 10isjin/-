@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppMode } from '../types';
-import { Sparkles, ArrowLeft, RefreshCw, Shield, Star, Users, Crosshair, Gamepad2 } from 'lucide-react';
+import { Sparkles, ArrowLeft, RefreshCw, Shield, Star, Users, Crosshair } from 'lucide-react';
 
 interface Props {
   currentMode: AppMode;
@@ -17,13 +17,6 @@ export const Navbar: React.FC<Props> = ({
 }) => {
   const getModeInfo = () => {
     switch (currentMode) {
-      case 'game':
-        return {
-          title: '버저빛터',
-          subtitle: '게임 모드',
-          badgeClass: 'bg-amber-400/20 text-amber-300 border-amber-400/40',
-          icon: Gamepad2
-        };
       case 'performer':
         return {
           title: '슈팅스타, 별을 쏘다',

@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppMode } from '../types';
-import { Sparkles, Crosshair, Star, Shield, ArrowRight, Award, Trophy, Users, Gamepad2, Flame } from 'lucide-react';
+import { Sparkles, Crosshair, Star, Shield, ArrowRight, Award, Trophy, Users } from 'lucide-react';
 
 interface Props {
   onSelectMode: (mode: AppMode) => void;
@@ -65,20 +65,6 @@ export const ModeSelection: React.FC<Props> = ({
       iconColor: 'text-rose-400',
       accentColor: 'bg-rose-400',
       features: ['교사 관리자 암호 인증 로그인', '교사 전문 피드백 & 별(1~3개) 부여', '엑셀 복사-붙여넣기 명렬표 등록', '학급 관리 및 데이터 백업']
-    },
-    {
-      id: 'game' as AppMode,
-      title: '버저빛터',
-      role: '게임 모드',
-      desc: '원버튼 타이밍으로 즐기는 아케이드 농구 슛 챌린지! 미들슛과 레이업슛을 애니메이션 캐릭터로 쏘아올리고, 제한 시간 60초 내 최다 득점에 도전하여 전교 통합 명예의 전당 1위를 차지하세요.',
-      icon: Gamepad2,
-      badge: '신설 슛 챌린지',
-      gradient: 'from-amber-500/25 via-yellow-500/15 to-transparent',
-      borderColor: 'border-amber-400/50 hover:border-amber-300',
-      tagColor: 'bg-amber-400/15 text-amber-300 border-amber-400/40',
-      iconColor: 'text-amber-400',
-      accentColor: 'bg-amber-400',
-      features: ['원버튼 슛 타이밍 (스페이스바 / 화면 터치)', '미들 점프슛 & 돌파 레이업슛 교대 챌린지', '60초 버저빛터 & 연속 콤보 온파이어', '학급 구분 없는 전교 통합 명예의 전당']
     }
   ];
 
@@ -116,14 +102,11 @@ export const ModeSelection: React.FC<Props> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
         {modes.map((mode) => {
           const Icon = mode.icon;
-          const isGame = mode.id === 'game';
           return (
             <div
               key={mode.id}
               onClick={() => onSelectMode(mode.id)}
-              className={`group relative rounded-2xl p-6 sm:p-7 bg-slate-900/70 border ${mode.borderColor} transition-all duration-200 hover:-translate-y-1 hover:shadow-2xl hover:shadow-slate-950/80 cursor-pointer overflow-hidden flex flex-col justify-between ${
-                isGame ? 'md:col-span-2 ring-1 ring-amber-400/30 bg-gradient-to-br from-amber-950/20 via-slate-900/90 to-slate-900/80' : ''
-              }`}
+              className={`group relative rounded-2xl p-6 sm:p-7 bg-slate-900/70 border ${mode.borderColor} transition-all duration-200 hover:-translate-y-1 hover:shadow-2xl hover:shadow-slate-950/80 cursor-pointer overflow-hidden flex flex-col justify-between`}
             >
               {/* Card top subtle gradient */}
               <div className={`absolute -top-24 -right-24 w-52 h-52 rounded-full bg-gradient-to-br ${mode.gradient} blur-3xl pointer-events-none group-hover:scale-125 transition-transform duration-500`} />
@@ -136,12 +119,6 @@ export const ModeSelection: React.FC<Props> = ({
                       <Icon className="w-3.5 h-3.5" />
                       {mode.role}
                     </span>
-                    {mode.badge && (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 shadow-sm animate-pulse">
-                        <Flame className="w-3 h-3 fill-current" />
-                        {mode.badge}
-                      </span>
-                    )}
                   </div>
                   <div className="w-9 h-9 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-center text-slate-400 group-hover:text-white group-hover:border-slate-700 transition-all">
                     <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />

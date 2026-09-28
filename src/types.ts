@@ -169,4 +169,4 @@ export interface AppStateData {
   gameScores?: GameScoreItem[]; // 별빛 버저비터 게임 랭킹 데이터
 }
 
-export type AppMode = 'home' | 'performer' | 'observer' | 'all' | 'teacher' | 'game';
+export type AppMode = 'home' | 'performer' | 'observer' | 'all' | 'teacher';
