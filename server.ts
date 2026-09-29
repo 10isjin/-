@@ -19,7 +19,7 @@ import {
   StudentAnswer,
   GameScoreItem
 } from "./src/types";
-import { getDefaultAppState, getDefaultClasses, getDefaultStudents } from "./src/lib/defaultData";
+import { getDefaultAppState, getDefaultClasses, getDefaultStudents, getDefaultSessionQuestions } from "./src/lib/defaultData";
 
 dotenv.config();
 
@@ -74,6 +74,8 @@ function saveState(state: AppStateData) {
       feedbacks: state.feedbacks || [],
       aiEvaluations: state.aiEvaluations || {},
       teacherQuestions: state.teacherQuestions || {},
+      sessionQuestions: state.sessionQuestions || {},
+      classSessionQuestions: state.classSessionQuestions || {},
       studentAnswers: state.studentAnswers || {},
       activeSessions: state.activeSessions || {},
       gameScores: state.gameScores || [],
@@ -103,6 +105,8 @@ async function syncFromFirestore(): Promise<AppStateData | null> {
           feedbacks: Array.isArray(data.feedbacks) ? data.feedbacks : [],
           aiEvaluations: data.aiEvaluations || {},
           teacherQuestions: data.teacherQuestions || {},
+          sessionQuestions: data.sessionQuestions || {},
+          classSessionQuestions: data.classSessionQuestions || {},
           studentAnswers: data.studentAnswers || {},
           activeSessions: data.activeSessions || {},
           gameScores: Array.isArray(data.gameScores) ? data.gameScores : []
@@ -149,6 +153,7 @@ function loadState(): AppStateData {
             feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks : [],
             aiEvaluations: parsed.aiEvaluations || {},
             teacherQuestions: parsed.teacherQuestions || {},
+            sessionQuestions: (parsed.sessionQuestions && Object.keys(parsed.sessionQuestions).length > 0) ? parsed.sessionQuestions : getDefaultSessionQuestions(),
             studentAnswers: parsed.studentAnswers || {},
             activeSessions: parsed.activeSessions || {},
             gameScores: Array.isArray(parsed.gameScores) ? parsed.gameScores : []
@@ -163,6 +168,10 @@ function loadState(): AppStateData {
 
   const loaded = tryLoad(DATA_FILE) || tryLoad(BACKUP_FILE);
   if (loaded) {
+    if (!loaded.sessionQuestions || Object.keys(loaded.sessionQuestions).length === 0) {
+      loaded.sessionQuestions = getDefaultSessionQuestions();
+      saveState(loaded);
+    }
     console.log(`[ShootingStar] Loaded persistent data: ${loaded.classes.length} classes, ${loaded.students.length} students, ${loaded.feedbacks.length} feedbacks`);
     return loaded;
   }
@@ -286,7 +295,7 @@ app.post("/api/classes/batch-grade3", (req, res) => {
 // 3-4. Save or reset teacher question for a specific class
 app.post("/api/classes/:classId/question", (req, res) => {
   const { classId } = req.params;
-  const { question } = req.body;
+  const { question, session } = req.body;
 
   if (!appState.teacherQuestions) {
     appState.teacherQuestions = {};
@@ -312,9 +321,14 @@ app.post("/api/classes/:classId/question", (req, res) => {
     });
   }
 
+  const activeSess = typeof session === 'number' && session >= 1 && session <= 17
+    ? session
+    : (appState.activeSessions?.[classId] || 1);
+
   appState.teacherQuestions[classId] = {
     classId,
     question: cleanQuestion,
+    session: activeSess,
     updatedAt: Date.now()
   };
 
@@ -348,6 +362,127 @@ app.delete("/api/classes/:classId/question", (req, res) => {
     data: { classId, question: "", updatedAt: Date.now() },
     message: "해당 학급의 오늘의 질문 및 답변이 완전히 초기화되었습니다."
   });
+});
+
+// 3-4-1. Get all 1~17 session questions
+app.get("/api/session-questions", (_req, res) => {
+  if (!appState.sessionQuestions || Object.keys(appState.sessionQuestions).length === 0) {
+    appState.sessionQuestions = getDefaultSessionQuestions();
+    saveState(appState);
+  }
+  res.json({
+    success: true,
+    sessionQuestions: appState.sessionQuestions
+  });
+});
+
+// 3-4-2. Save a single session question (1~17)
+app.post("/api/session-questions/:session", (req, res) => {
+  const session = parseInt(req.params.session, 10);
+  const { question } = req.body;
+
+  if (isNaN(session) || session < 1 || session > 17) {
+    return res.status(400).json({ success: false, message: "차시는 1~17차시 사이여야 합니다." });
+  }
+
+  if (!appState.sessionQuestions) {
+    appState.sessionQuestions = getDefaultSessionQuestions();
+  }
+
+  appState.sessionQuestions[session] = (question || "").trim();
+  saveState(appState);
+
+  res.json({
+    success: true,
+    session,
+    question: appState.sessionQuestions[session],
+    message: `${session}차시 질문이 성공적으로 저장되었습니다.`
+  });
+});
+
+// 3-4-3. Batch save session questions (1~17)
+app.put("/api/session-questions", (req, res) => {
+  const { questions } = req.body;
+  if (questions && typeof questions === 'object') {
+    appState.sessionQuestions = {
+      ...(appState.sessionQuestions || getDefaultSessionQuestions()),
+      ...questions
+    };
+    saveState(appState);
+    return res.json({
+      success: true,
+      sessionQuestions: appState.sessionQuestions,
+      message: "차시별 질문들이 성공적으로 저장되었습니다."
+    });
+  }
+  return res.status(400).json({ success: false, message: "유효하지 않은 질문 데이터입니다." });
+});
+
+// 3-4-4. Get all session questions for a specific class
+app.get("/api/classes/:classId/session-questions", (req, res) => {
+  const { classId } = req.params;
+  const questions = appState.classSessionQuestions?.[classId] || {};
+  res.json({ success: true, classId, questions });
+});
+
+// 3-4-5. Save single session question for a specific class (1~17)
+app.post("/api/classes/:classId/session-questions/:session", (req, res) => {
+  const { classId, session } = req.params;
+  const { question } = req.body;
+  const sNum = parseInt(session, 10);
+  if (isNaN(sNum) || sNum < 1 || sNum > 17) {
+    return res.status(400).json({ success: false, message: "차시는 1~17차시 사이여야 합니다." });
+  }
+
+  if (!appState.classSessionQuestions) {
+    appState.classSessionQuestions = {};
+  }
+  if (!appState.classSessionQuestions[classId]) {
+    appState.classSessionQuestions[classId] = {};
+  }
+
+  const cleanQ = (question || "").trim();
+  appState.classSessionQuestions[classId][sNum] = cleanQ;
+  saveState(appState);
+
+  res.json({
+    success: true,
+    classId,
+    session: sNum,
+    question: cleanQ,
+    message: `${sNum}차시 질문이 성공적으로 저장되었습니다.`
+  });
+});
+
+// 3-4-6. Batch save 1~17 session questions for a specific class
+app.put("/api/classes/:classId/session-questions", (req, res) => {
+  const { classId } = req.params;
+  const { questions } = req.body;
+
+  if (!appState.classSessionQuestions) {
+    appState.classSessionQuestions = {};
+  }
+  if (!appState.classSessionQuestions[classId]) {
+    appState.classSessionQuestions[classId] = {};
+  }
+
+  if (questions && typeof questions === 'object') {
+    Object.keys(questions).forEach(key => {
+      const sNum = parseInt(key, 10);
+      if (!isNaN(sNum) && sNum >= 1 && sNum <= 17) {
+        appState.classSessionQuestions![classId][sNum] = String(questions[key] || '').trim();
+      }
+    });
+    saveState(appState);
+    return res.json({
+      success: true,
+      classId,
+      questions: appState.classSessionQuestions[classId],
+      message: "학급의 차시별 질문이 성공적으로 일괄 저장되었습니다."
+    });
+  }
+
+  return res.status(400).json({ success: false, message: "유효하지 않은 질문 데이터입니다." });
 });
 
 // 3-5. Save student answer to teacher question
@@ -1349,10 +1484,30 @@ async function startServer() {
   try {
     const cloudState = await syncFromFirestore();
     if (cloudState && cloudState.classes && cloudState.students) {
-      appState = cloudState;
+      // Merge cloudState with existing loaded disk appState so teacherQuestions and sessionQuestions are NEVER lost
+      appState = {
+        classes: cloudState.classes && cloudState.classes.length > 0 ? cloudState.classes : appState.classes,
+        students: cloudState.students && cloudState.students.length > 0 ? cloudState.students : appState.students,
+        feedbacks: (cloudState.feedbacks && cloudState.feedbacks.length > 0) ? cloudState.feedbacks : (appState.feedbacks || []),
+        aiEvaluations: { ...(appState.aiEvaluations || {}), ...(cloudState.aiEvaluations || {}) },
+        teacherQuestions: { ...(appState.teacherQuestions || {}), ...(cloudState.teacherQuestions || {}) },
+        sessionQuestions: {
+          ...(appState.sessionQuestions || {}),
+          ...(cloudState.sessionQuestions || {})
+        },
+        classSessionQuestions: {
+          ...(appState.classSessionQuestions || {}),
+          ...(cloudState.classSessionQuestions || {})
+        },
+        studentAnswers: { ...(appState.studentAnswers || {}), ...(cloudState.studentAnswers || {}) },
+        activeSessions: { ...(appState.activeSessions || {}), ...(cloudState.activeSessions || {}) },
+        gameScores: (cloudState.gameScores && cloudState.gameScores.length > 0) ? cloudState.gameScores : (appState.gameScores || [])
+      };
       // Also cache to local disk
       saveState(appState);
-      console.log(`[ShootingStar] Cloud Firestore loaded into appState: ${appState.classes.length} classes, ${appState.students.length} students`);
+      console.log(`[ShootingStar] Cloud Firestore merged into appState: ${appState.classes.length} classes, ${appState.students.length} students`);
+    } else {
+      saveState(appState);
     }
   } catch (err) {
     console.warn("[ShootingStar] Failed to sync from Cloud Firestore at startup:", err);

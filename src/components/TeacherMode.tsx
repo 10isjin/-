@@ -12,6 +12,7 @@ import {
   TeacherQuestion,
   StudentAnswer
 } from '../types';
+import { getDefaultSessionQuestions } from '../lib/defaultData';
 import {
   Shield,
   KeyRound,
@@ -47,7 +48,8 @@ import {
   Target,
   Calendar,
   Clock,
-  Heart
+  Heart,
+  RotateCcw
 } from 'lucide-react';
 
 interface Props {
@@ -56,6 +58,8 @@ interface Props {
   feedbacks: FeedbackItem[];
   activeSessions?: Record<string, number>;
   teacherQuestions?: Record<string, TeacherQuestion>;
+  sessionQuestions?: Record<number, string>;
+  classSessionQuestions?: Record<string, Record<number, string>>;
   studentAnswers?: Record<string, StudentAnswer>;
   onAddClass: (name: string) => Promise<boolean>;
   onUpdateClass: (id: string, name: string) => Promise<boolean>;
@@ -74,7 +78,11 @@ interface Props {
     session?: number | 'all';
     clearAiEvaluations?: boolean;
   } | string) => Promise<{ success: boolean; message?: string; deletedCount?: number } | boolean>;
-  onSaveTeacherQuestion?: (classId: string, question: string) => Promise<boolean>;
+  onSaveTeacherQuestion?: (classId: string, question: string, session?: number) => Promise<boolean>;
+  onSaveSessionQuestion?: (session: number, question: string) => Promise<boolean>;
+  onBatchSaveSessionQuestions?: (questions: Record<number, string>) => Promise<boolean>;
+  onSaveClassSessionQuestion?: (classId: string, session: number, question: string) => Promise<boolean>;
+  onBatchSaveClassSessionQuestions?: (classId: string, questions: Record<number, string>) => Promise<boolean>;
   onSubmitTeacherFeedback: (payload: {
     classId: string;
     performerId: string;
@@ -93,12 +101,35 @@ interface Props {
 // 1~17차시 수업 목록 상수
 const SESSIONS_1_TO_17 = Array.from({ length: 17 }, (_, i) => i + 1);
 
+// 1~17차시 농구 슛 교육과정 차시별 테마 정보
+const SESSION_CURRICULUM: Record<number, { title: string; subtitle: string; icon: string }> = {
+  1: { title: '1차시: 기본 감각 & 볼 핸들링', subtitle: '손가락 터치, 핑거팁 컨트롤, 공과 친숙해지기', icon: '🏀' },
+  2: { title: '2차시: 미들슛 하체 반동 (Dip)', subtitle: '무릎 굽힘과 하체 에너지 전달, 비거리 확보', icon: '🦵' },
+  3: { title: '3차시: 타점 (Set Point)과 시선', subtitle: '이마 위 타점 형성, 림 앞쪽 조준선 유지', icon: '👀' },
+  4: { title: '4차시: 릴리스 & 팔로우 스로우', subtitle: '팔 뻗기(스완 넥), 일정한 릴리스 포물선', icon: '🏹' },
+  5: { title: '5차시: 손목 스냅 & 백스핀', subtitle: '부드러운 손목 꺾임(Goose Neck), 역회전 유도', icon: '💫' },
+  6: { title: '6차시: 미들슛 4대 기준 종합', subtitle: '타점-반동-팔로우-스냅 완벽한 체인 연결', icon: '⭐' },
+  7: { title: '7차시: 레이업슛 1-2 리듬 스텝', subtitle: '원-투 리듬감 있는 발놀림, 감속 없는 전진', icon: '👟' },
+  8: { title: '8차시: 백보드 사각형 조준 & 타점', subtitle: '백보드 상단 모서리 타점 키스, 각도 계산', icon: '🎯' },
+  9: { title: '9차시: 수직 무릎 도약 & 체공력', subtitle: '안쪽 무릎 수직 차올리기, 높은 릴리스 위치', icon: '🚀' },
+  10: { title: '10차시: 스텝-점프 유기적 연결', subtitle: '드리블-캐치-스텝-점프 원모션 부드러운 연결', icon: '🔗' },
+  11: { title: '11차시: 골밑 돌파 & 착지 안정성', subtitle: '수비 접근 시 신체 밸런스 유지 및 안전한 양발 착지', icon: '🛡️' },
+  12: { title: '12차시: 미들슛 vs 레이업 선택 판단', subtitle: '수비수 거리와 오픈 찬스 인지, 빠른 슛 선택', icon: '🧠' },
+  13: { title: '13차시: 동료 상호 피드백 & 성찰', subtitle: '서로의 슛 폼 관찰하기, 건설적 별빛 조언 나누기', icon: '🤝' },
+  14: { title: '14차시: 실전 슈팅 집중력 & 자세 일관성', subtitle: '체력 저하 상황에서도 동일한 슛 폼 유지하기', icon: '🔥' },
+  15: { title: '15차시: 3:3 미니게임 실전 폼 적용', subtitle: '경기 속 움직임(무빙) 상황에서 침착한 슛 시도', icon: '⚔️' },
+  16: { title: '16차시: 팀 패스 연계 슛 찬스 해결', subtitle: '공간 창출 후 패스 받아 즉각 슛으로 연결', icon: '⚡' },
+  17: { title: '17차시: 1~17차시 총괄 슛 성장 평가', subtitle: '한 학기 나의 슛 자세 발전도 및 체육 태도 총결산', icon: '🏆' },
+};
+
 export const TeacherMode: React.FC<Props> = ({
   classes,
   students,
   feedbacks,
   activeSessions = {},
   teacherQuestions = {},
+  sessionQuestions = {},
+  classSessionQuestions = {},
   studentAnswers = {},
   onAddClass,
   onUpdateClass,
@@ -112,6 +143,10 @@ export const TeacherMode: React.FC<Props> = ({
   onDeleteFeedback,
   onClearFeedbacks,
   onSaveTeacherQuestion,
+  onSaveSessionQuestion,
+  onBatchSaveSessionQuestions,
+  onSaveClassSessionQuestion,
+  onBatchSaveClassSessionQuestions,
   onSubmitTeacherFeedback,
   onSetActiveSession,
   onBatchSetActiveSession,
@@ -125,35 +160,52 @@ export const TeacherMode: React.FC<Props> = ({
   // Active Tab: 'classes' | 'roster' | 'question' | 'feedback' | 'settings'
   const [activeTab, setActiveTab] = useState<'classes' | 'roster' | 'question' | 'feedback' | 'settings'>('classes');
 
-  // Daily Question States
+  // Daily Question States (심플 학급 선택 -> 1~17차시 질문 목록 입력 -> 차시 변경 시 자동 연동)
   const [questionClassId, setQuestionClassId] = useState<string>(classes[0]?.id || '');
-  const [questionInput, setQuestionInput] = useState<string>('');
-  const [isQuestionSubmitting, setIsQuestionSubmitting] = useState<boolean>(false);
-  const [questionSuccessMsg, setQuestionSuccessMsg] = useState<string>('');
-  const [confirmResetQuestion, setConfirmResetQuestion] = useState<boolean>(false);
-
-  // Track the last loaded class ID so background state refreshes don't overwrite user typing
+  const [classQuestionsInput, setClassQuestionsInput] = useState<Record<number, string>>({});
   const lastLoadedQuestionClassIdRef = useRef<string>('');
   const isQuestionDirtyRef = useRef<boolean>(false);
+  const [isSavingQuestion, setIsSavingQuestion] = useState<boolean>(false);
+  const [savedSessionNum, setSavedSessionNum] = useState<number | 'all' | null>(null);
+  const [sessionSuccessToast, setSessionSuccessToast] = useState<string>('');
+  const [answersFilterSession, setAnswersFilterSession] = useState<number | 'all'>('all');
 
-  // Keep question input in sync ONLY when user deliberately switches the questionClassId
+  // Keep questionClassId valid
   useEffect(() => {
-    // If the selected class changed, load the question for the newly selected class
+    if (classes.length > 0 && !classes.some(c => c.id === questionClassId)) {
+      setQuestionClassId(classes[0].id);
+    }
+  }, [classes, questionClassId]);
+
+  // Load questions for the selected class without forcing default filler questions
+  useEffect(() => {
     if (questionClassId !== lastLoadedQuestionClassIdRef.current) {
       lastLoadedQuestionClassIdRef.current = questionClassId;
       isQuestionDirtyRef.current = false;
-      setConfirmResetQuestion(false);
-      if (questionClassId && teacherQuestions[questionClassId]) {
-        setQuestionInput(teacherQuestions[questionClassId].question || '');
-      } else {
-        setQuestionInput('');
+      const classQ = (classSessionQuestions && classSessionQuestions[questionClassId]) || {};
+      const newMap: Record<number, string> = {};
+      SESSIONS_1_TO_17.forEach(n => {
+        newMap[n] = classQ[n] || '';
+      });
+      // Fallback: if legacy teacherQuestions has a question for this class and session is empty
+      if (teacherQuestions[questionClassId]?.question && !Object.values(classQ).some(Boolean)) {
+        const activeSess = activeSessions[questionClassId] || 1;
+        newMap[activeSess] = teacherQuestions[questionClassId].question;
       }
+      setClassQuestionsInput(newMap);
     } else if (!isQuestionDirtyRef.current) {
-      // If user hasn't typed anything new in this class yet, keep synced with server
-      const serverQ = questionClassId && teacherQuestions[questionClassId]?.question ? teacherQuestions[questionClassId].question : '';
-      setQuestionInput(serverQ);
+      const classQ = (classSessionQuestions && classSessionQuestions[questionClassId]) || {};
+      setClassQuestionsInput(prev => {
+        const updated: Record<number, string> = { ...prev };
+        SESSIONS_1_TO_17.forEach(n => {
+          if (classQ[n] !== undefined) {
+            updated[n] = classQ[n];
+          }
+        });
+        return updated;
+      });
     }
-  }, [questionClassId, teacherQuestions]);
+  }, [questionClassId, classSessionQuestions, teacherQuestions, activeSessions]);
 
   // Class Management States (반별 관리)
   const [newClassName, setNewClassName] = useState<string>('');
@@ -721,51 +773,63 @@ export const TeacherMode: React.FC<Props> = ({
     }
   };
 
-  // Handler: Save teacher daily question for class
-  const handleSaveQuestionAction = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+  // Save single session question for the selected class
+  const handleSaveSingleSessionAction = async (sessionNum: number) => {
     if (!questionClassId) return;
-
-    const clean = questionInput.trim();
-    if (!clean) {
-      // If submitted empty text, directly reset the question
-      return handleExecuteResetQuestion();
+    setIsSavingQuestion(true);
+    setSavedSessionNum(sessionNum);
+    const qText = (classQuestionsInput[sessionNum] || '').trim();
+    if (onSaveClassSessionQuestion) {
+      await onSaveClassSessionQuestion(questionClassId, sessionNum, qText);
     }
-    if (!onSaveTeacherQuestion) return;
-
-    setIsQuestionSubmitting(true);
-    setConfirmResetQuestion(false);
-    const success = await onSaveTeacherQuestion(questionClassId, clean);
-    setIsQuestionSubmitting(false);
-
-    if (success) {
-      isQuestionDirtyRef.current = false;
-      const clsName = classes.find(c => c.id === questionClassId)?.name || '선택 학급';
-      setQuestionSuccessMsg(`${clsName}의 오늘의 질문이 성공적으로 등록/수정되었습니다!`);
-      setTimeout(() => setQuestionSuccessMsg(''), 4000);
+    // Also sync to legacy teacherQuestions if this session is the active one
+    const currentActive = activeSessions[questionClassId] || 1;
+    if (sessionNum === currentActive && onSaveTeacherQuestion) {
+      await onSaveTeacherQuestion(questionClassId, qText, sessionNum);
     }
+    isQuestionDirtyRef.current = false;
+    setIsSavingQuestion(false);
+    const cName = classes.find(c => c.id === questionClassId)?.name || '선택 학급';
+    setSessionSuccessToast(
+      qText
+        ? `${cName} ${sessionNum}차시 저장 완료`
+        : `${cName} ${sessionNum}차시 초기화 완료`
+    );
+    setTimeout(() => {
+      setSessionSuccessToast('');
+      setSavedSessionNum(null);
+    }, 2000);
   };
 
-  // Handler: Execute Reset/Delete teacher daily question for class (No window.confirm to guarantee iFrame compatibility)
-  const handleExecuteResetQuestion = async () => {
+  // Batch save all 1~17 session questions for the selected class
+  const handleBatchSaveAllSessionsAction = async () => {
     if (!questionClassId) return;
-    const clsName = classes.find(c => c.id === questionClassId)?.name || '선택 학급';
-
-    setIsQuestionSubmitting(true);
-    isQuestionDirtyRef.current = false;
-    setQuestionInput('');
-    setConfirmResetQuestion(false);
-
-    try {
-      const success = await onSaveTeacherQuestion?.(questionClassId, '');
-      if (success) {
-        setQuestionInput('');
-        setQuestionSuccessMsg(`${clsName}의 오늘의 질문이 깨끗하게 초기화되었습니다.`);
-        setTimeout(() => setQuestionSuccessMsg(''), 4000);
-      }
-    } finally {
-      setIsQuestionSubmitting(false);
+    setIsSavingQuestion(true);
+    setSavedSessionNum('all');
+    if (onBatchSaveClassSessionQuestions) {
+      await onBatchSaveClassSessionQuestions(questionClassId, classQuestionsInput);
     }
+    const currentActive = activeSessions[questionClassId] || 1;
+    if (onSaveTeacherQuestion) {
+      await onSaveTeacherQuestion(questionClassId, (classQuestionsInput[currentActive] || '').trim(), currentActive);
+    }
+    isQuestionDirtyRef.current = false;
+    setIsSavingQuestion(false);
+    const cName = classes.find(c => c.id === questionClassId)?.name || '선택 학급';
+    setSessionSuccessToast(`${cName} 1~17차시 전체 저장 완료`);
+    setTimeout(() => {
+      setSessionSuccessToast('');
+      setSavedSessionNum(null);
+    }, 2000);
+  };
+
+  // Change class active session (automatically reflects that session's question in PerformerMode)
+  const handleClassSessionSelectAction = async (classId: string, sessionNum: number) => {
+    if (!onSetActiveSession) return;
+    await onSetActiveSession(classId, sessionNum);
+    const cName = classes.find(c => c.id === classId)?.name || '선택 학급';
+    setSessionSuccessToast(`${cName} ${sessionNum}차시로 변경 완료`);
+    setTimeout(() => setSessionSuccessToast(''), 2000);
   };
 
   // 1. PIN Auth Screen
@@ -1289,7 +1353,7 @@ export const TeacherMode: React.FC<Props> = ({
         </div>
       )}
 
-      {/* TAB: Teacher Daily Question Registration (학급별 오늘의 질문 등록) */}
+      {/* TAB: Teacher Daily Question Registration (심플 학급별 1~17차시 질문 등록 & 차시 자동 연동) */}
       {activeTab === 'question' && (
         <div className="space-y-6">
           {/* Header Card */}
@@ -1298,76 +1362,74 @@ export const TeacherMode: React.FC<Props> = ({
               <div>
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30 text-xs font-bold mb-2">
                   <MessageSquareQuote className="w-3.5 h-3.5 text-amber-400" />
-                  교사 오늘의 질문 관리
+                  오늘의 질문 관리
                 </div>
                 <h3 className="text-xl font-extrabold text-white flex items-center gap-2">
-                  학급별 맞춤 질문 등록 & 학생 답변 확인
+                  학급별 1~17차시 질문 등록 &amp; 차시 자동 연동
                 </h3>
                 <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
-                  학급마다 수업 진도가 다르기 때문에, <strong className="text-amber-300">각 반별로 오늘의 질문을 다르게 등록</strong>할 수 있습니다.
-                  등록된 질문은 학생들이 <strong className="text-white">[수행자 모드]</strong>에서 본인 학급을 선택했을 때 고대비 시인성 배너로 바로 안내되며, 학생들은 답변을 적어 제출할 수 있습니다.
+                  질문을 등록할 <strong className="text-amber-300">학급을 선택</strong>하고, 아래 <strong className="text-white">1차시부터 17차시까지</strong> 원하는 질문을 직접 입력해 두세요. 학급의 <strong className="text-amber-300">수업 차시를 변경하면 그 차시에 맞는 질문이 학생 수행자 화면에 자동으로 즉시 연동</strong>됩니다.
                 </p>
               </div>
 
-              {/* Class Selector Dropdown */}
-              <div className="sm:w-64 bg-slate-950/90 p-3 rounded-xl border border-amber-400/30 shrink-0">
-                <label className="text-[11px] font-bold text-amber-300 uppercase tracking-wider block mb-1.5 flex items-center gap-1">
-                  <Layers className="w-3 h-3" /> 질문 등록 대상 학급
-                </label>
-                <select
-                  value={questionClassId}
-                  onChange={(e) => setQuestionClassId(e.target.value)}
-                  className="w-full p-2.5 rounded-lg bg-slate-900 border border-slate-700 text-sm font-bold text-white focus:outline-none focus:border-amber-400"
+              {/* Quick Batch Save Button at Header */}
+              {classes.length > 0 && (
+                <button
+                  type="button"
+                  disabled={isSavingQuestion}
+                  onClick={handleBatchSaveAllSessionsAction}
+                  className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs transition-all flex items-center gap-2 shadow-lg shadow-amber-400/20 cursor-pointer disabled:opacity-50 shrink-0 self-start sm:self-center"
                 >
-                  {classes.map(c => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} {teacherQuestions[c.id]?.question ? ' (질문 등록됨)' : ' (질문 없음)'}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                  <Save className="w-4 h-4" />
+                  {isSavingQuestion && savedSessionNum === 'all'
+                    ? '저장 중...'
+                    : `${classes.find(c => c.id === questionClassId)?.name || '이 학급'} 1~17차시 전체 저장`}
+                </button>
+              )}
             </div>
 
-            {/* Success toast */}
-            {questionSuccessMsg && (
-              <div className="p-3.5 rounded-xl bg-emerald-950/70 border border-emerald-500/50 text-emerald-300 text-xs flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span className="font-semibold">{questionSuccessMsg}</span>
+            {/* Simple Floating Confirmation Toast */}
+            {sessionSuccessToast && (
+              <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-200">
+                <div className="px-4 py-2 rounded-full bg-slate-900/95 border border-emerald-500/60 text-emerald-300 text-xs font-black flex items-center gap-2 shadow-2xl shadow-black/80 backdrop-blur-md">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{sessionSuccessToast}</span>
+                </div>
               </div>
             )}
 
-            {/* Quick Class Pills for easy switching */}
-            <div className="pt-2 border-t border-slate-800">
+            {/* STEP 1: 학급 선택 가로 탭 바 (1반 ~ 11반) */}
+            <div className="pt-3 border-t border-slate-800">
               <span className="text-[11px] font-bold text-slate-400 block mb-2">
-                학급 바로 선택하기 (1~11반):
+                1단계 &bull; 학급 선택 (반별로 질문을 다르게 등록할 수 있습니다):
               </span>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-11 gap-1.5">
                 {classes.map(c => {
-                  const hasQ = Boolean(teacherQuestions[c.id]?.question);
                   const isCurrent = c.id === questionClassId;
-                  const answerCount = Object.values(studentAnswers).filter(a => a.classId === c.id).length;
+                  const cSess = activeSessions[c.id] || 1;
+                  const classQuestions = (classSessionQuestions && classSessionQuestions[c.id]) || {};
+                  const registeredCount = SESSIONS_1_TO_17.filter(n => Boolean(classQuestions[n]?.trim())).length;
+
                   return (
                     <button
                       key={c.id}
                       type="button"
                       onClick={() => setQuestionClassId(c.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                      className={`p-2.5 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center gap-1 cursor-pointer border ${
                         isCurrent
-                          ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-400/20'
-                          : hasQ
-                          ? 'bg-amber-400/10 text-amber-300 border border-amber-400/30 hover:bg-amber-400/20'
-                          : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                          ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-md shadow-amber-400/20 font-black'
+                          : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'
                       }`}
                     >
-                      <span>{c.name.match(/\d+반/) ? c.name.match(/\d+반/)?.[0] : c.name}</span>
-                      {hasQ && (
-                        <span className={`w-2 h-2 rounded-full ${isCurrent ? 'bg-slate-950' : 'bg-amber-400'}`} />
-                      )}
-                      {hasQ && answerCount > 0 && (
-                        <span className={`text-[10px] px-1 rounded font-bold ${isCurrent ? 'bg-slate-900 text-amber-300' : 'bg-slate-800 text-slate-300'}`}>
-                          {answerCount}
+                      <span className="font-extrabold">{c.name.match(/\d+반/) ? c.name.match(/\d+반/)?.[0] : c.name}</span>
+                      <div className="flex items-center gap-1">
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${isCurrent ? 'bg-slate-950 text-amber-300' : 'bg-slate-800 text-slate-400'}`}>
+                          {cSess}차시
                         </span>
-                      )}
+                        {registeredCount > 0 && (
+                          <span className={`w-1.5 h-1.5 rounded-full ${isCurrent ? 'bg-slate-950' : 'bg-emerald-400'}`} title={`${registeredCount}개 질문 등록됨`} />
+                        )}
+                      </div>
                     </button>
                   );
                 })}
@@ -1375,205 +1437,232 @@ export const TeacherMode: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Question Input Form & Preview */}
-          <form onSubmit={handleSaveQuestionAction} className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-5 shadow-xl">
-            {(() => {
-              const currentQClass = classes.find(c => c.id === questionClassId);
-              const savedQuestionObj = questionClassId ? teacherQuestions[questionClassId] : undefined;
-              const hasSavedQuestion = Boolean(savedQuestionObj && savedQuestionObj.question && savedQuestionObj.question.trim());
+          {/* STEP 2: 현재 선택된 학급의 수업 차시 설정 카드 */}
+          {(() => {
+            const currentClass = classes.find(c => c.id === questionClassId);
+            const currentActiveSess = questionClassId ? (activeSessions[questionClassId] || 1) : 1;
+            const currentActiveQ = (classQuestionsInput[currentActiveSess] || '').trim();
 
-              return (
-                <>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <span className="px-3 py-1 rounded-lg bg-amber-400 text-slate-950 font-black text-xs">
-                        {currentQClass?.name || '선택 학급'}
+            return (
+              <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-lg space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="px-3 py-1 rounded-xl bg-amber-400 text-slate-950 font-black text-sm">
+                      {currentClass?.name || '선택 학급'}
+                    </span>
+                    <span className="text-xs font-bold text-slate-300">
+                      현재 수업 차시 설정:
+                    </span>
+                    <select
+                      value={currentActiveSess}
+                      onChange={(e) => handleClassSessionSelectAction(questionClassId, Number(e.target.value))}
+                      className="px-3 py-1.5 rounded-xl bg-slate-950 border border-amber-400/60 text-amber-300 font-extrabold text-xs focus:outline-none focus:border-amber-400 cursor-pointer shadow-sm"
+                    >
+                      {SESSIONS_1_TO_17.map(n => (
+                        <option key={n} value={n}>{n}차시</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="text-xs">
+                    {currentActiveQ ? (
+                      <span className="text-emerald-400 font-bold flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        현재 [{currentActiveSess}차시] 질문이 학생 수행자 모드에 실시간 연동 중입니다.
                       </span>
-                      <h4 className="font-extrabold text-white text-base">
-                        오늘의 질문 반별 등록 &amp; 초기화
-                      </h4>
-                    </div>
+                    ) : (
+                      <span className="text-amber-400/90 font-medium flex items-center gap-1.5">
+                        <AlertCircle className="w-4 h-4 text-amber-400" />
+                        현재 [{currentActiveSess}차시]에 등록된 질문이 없습니다. (아래 {currentActiveSess}차시 항목에 질문을 입력해보세요)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
-                    <div className="flex items-center gap-2">
-                      {hasSavedQuestion ? (
-                        <div className="flex items-center gap-2">
-                          <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                            등록된 질문 있음
-                          </span>
-                          {savedQuestionObj?.updatedAt && (
-                            <span className="text-[11px] text-slate-500">
-                              최근 수정: {new Date(savedQuestionObj.updatedAt).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          {/* STEP 3: 1차시부터 17차시까지 쭉 나오는 질문 등록 목록 */}
+          {(() => {
+            const currentClass = classes.find(c => c.id === questionClassId);
+            const currentActiveSess = questionClassId ? (activeSessions[questionClassId] || 1) : 1;
+
+            return (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-400" />
+                    {currentClass?.name || '선택 학급'} 1~17차시 질문 목록
+                  </h4>
+                  <span className="text-[11px] text-slate-400">
+                    차시별 질문 입력 후 우측 [저장] 버튼을 누르거나, 상단 [전체 저장] 버튼을 누르면 영구 보존됩니다.
+                  </span>
+                </div>
+
+                <div className="space-y-2.5">
+                  {SESSIONS_1_TO_17.map(n => {
+                    const isActiveSession = n === currentActiveSess;
+                    const qText = classQuestionsInput[n] || '';
+                    const isSavingThis = isSavingQuestion && savedSessionNum === n;
+
+                    return (
+                      <div
+                        key={n}
+                        className={`p-4 rounded-2xl transition-all border shadow-md flex flex-col md:flex-row md:items-center gap-3 ${
+                          isActiveSession
+                            ? 'bg-amber-950/20 border-amber-400/60 ring-1 ring-amber-400/30'
+                            : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        {/* Session Badge and Status */}
+                        <div className="md:w-44 shrink-0 flex md:flex-col items-center md:items-start justify-between gap-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2.5 py-1 rounded-lg text-xs font-black ${
+                              isActiveSession
+                                ? 'bg-amber-400 text-slate-950 shadow-sm'
+                                : 'bg-slate-800 text-slate-300'
+                            }`}>
+                              {n}차시
+                            </span>
+                            {isActiveSession && (
+                              <span className="text-[11px] font-black text-amber-300 md:hidden">
+                                ★ 현재 수업 차시
+                              </span>
+                            )}
+                          </div>
+                          {isActiveSession && (
+                            <span className="hidden md:inline-flex items-center gap-1 text-[11px] font-black text-amber-300 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                              현재 학생 화면 연동 중
                             </span>
                           )}
                         </div>
-                      ) : (
-                        <span className="px-2.5 py-1 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-xs font-bold">
-                          현재 등록된 질문 없음 (미등록)
-                        </span>
-                      )}
-                    </div>
-                  </div>
 
-                  <div>
-                    <label className="text-xs font-bold text-slate-300 block mb-2 flex items-center justify-between">
-                      <span>질문 내용 입력 (학생들의 생각과 슛 자세 원리를 묻는 질문)</span>
-                      <span className="text-slate-500 font-normal">고대비 디자인으로 학생 화면에 강조 표기됩니다</span>
-                    </label>
-                    <textarea
-                      rows={4}
-                      value={questionInput}
-                      onChange={(e) => {
-                        isQuestionDirtyRef.current = true;
-                        setQuestionInput(e.target.value);
-                      }}
-                      placeholder={`예시:
-- 오늘 미들슛을 쏠 때 팔꿈치 각도와 무릎 반동을 어떻게 연결해보았나요?
-- 레이업슛에서 마지막 스텝 시 백보드의 사각형 모서리를 어떻게 겨냥했는지 적어보세요.
-- 친구에게 피드백을 주며 나 자신의 슛 자세에서 새롭게 깨달은 점은 무엇인가요?`}
-                      className="w-full p-4 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder:text-slate-600 focus:outline-none focus:border-amber-400 text-sm leading-relaxed"
-                    />
-                  </div>
-
-                  {/* Visual Preview: How students will see this question */}
-                  {questionInput.trim() && (
-                    <div className="space-y-2">
-                      <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                        학생 화면(수행자 모드) 시인성 대비 미리보기:
-                      </span>
-                      <div className="p-4 rounded-2xl bg-amber-400 text-slate-950 font-bold shadow-xl flex items-start gap-3 border-2 border-amber-300">
-                        <div className="w-8 h-8 rounded-xl bg-slate-950 text-amber-300 flex items-center justify-center shrink-0 mt-0.5">
-                          <MessageSquareQuote className="w-4 h-4" />
-                        </div>
+                        {/* Question Textarea */}
                         <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-[11px] uppercase tracking-wider bg-slate-950 text-amber-300 px-2 py-0.5 rounded font-black">
-                              TODAY'S QUESTION &bull; 체육 선생님의 오늘 질문
-                            </span>
-                          </div>
-                          <p className="text-sm font-extrabold text-slate-950 leading-snug whitespace-pre-wrap">
-                            {questionInput.trim()}
-                          </p>
+                          <textarea
+                            rows={2}
+                            value={qText}
+                            onChange={(e) => {
+                              isQuestionDirtyRef.current = true;
+                              const val = e.target.value;
+                              setClassQuestionsInput(prev => ({
+                                ...prev,
+                                [n]: val
+                              }));
+                            }}
+                            placeholder={`${n}차시 질문을 입력하세요... (미입력 시 질문이 표시되지 않습니다)`}
+                            className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder:text-slate-600 focus:outline-none focus:border-amber-400 text-xs leading-relaxed"
+                          />
+                        </div>
+
+                        {/* Action buttons */}
+                        <div className="flex items-center gap-1.5 shrink-0 self-end md:self-center">
+                          {qText.trim() && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                isQuestionDirtyRef.current = true;
+                                setClassQuestionsInput(prev => ({ ...prev, [n]: '' }));
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-500 hover:text-rose-400 border border-slate-800 text-xs transition-colors cursor-pointer"
+                              title="질문 내용 지우기"
+                            >
+                              지우기
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={isSavingQuestion}
+                            onClick={() => handleSaveSingleSessionAction(n)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
+                              isSavingThis
+                                ? 'bg-emerald-500 text-white'
+                                : 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-sm'
+                            }`}
+                          >
+                            <Save className="w-3.5 h-3.5" />
+                            {isSavingThis ? '저장됨!' : '저장'}
+                          </button>
                         </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })}
+                </div>
 
-                  <div className="flex flex-wrap items-center gap-3 pt-2">
-                    <button
-                      type="submit"
-                      disabled={isQuestionSubmitting || !questionInput.trim()}
-                      className="flex-1 min-w-[220px] py-3.5 px-6 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-sm transition-all shadow-lg shadow-amber-400/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40"
-                    >
-                      <Save className="w-4 h-4" />
-                      {isQuestionSubmitting
-                        ? '처리 중...'
-                        : hasSavedQuestion
-                        ? `${currentQClass?.name || '선택 학급'} 질문 수정 저장`
-                        : `${currentQClass?.name || '선택 학급'} 오늘의 질문 신규 등록`}
-                    </button>
+                {/* Bottom Batch Save Button */}
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="button"
+                    disabled={isSavingQuestion}
+                    onClick={handleBatchSaveAllSessionsAction}
+                    className="px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs transition-all flex items-center gap-2 shadow-lg shadow-amber-400/20 cursor-pointer disabled:opacity-50"
+                  >
+                    <Save className="w-4 h-4" />
+                    {isSavingQuestion && savedSessionNum === 'all'
+                      ? '일괄 저장 중...'
+                      : `${currentClass?.name || '이 학급'} 1~17차시 질문 전체 일괄 저장`}
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
 
-                    {(hasSavedQuestion || questionInput) && (
-                      confirmResetQuestion ? (
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            disabled={isQuestionSubmitting}
-                            onClick={handleExecuteResetQuestion}
-                            className="py-3.5 px-5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-lg shadow-rose-600/30 animate-pulse"
-                            title="클릭 시 질문이 완전히 삭제됩니다"
-                          >
-                            <Trash2 className="w-4 h-4 text-white" />
-                            ⚠️ 정말 초기화(삭제)할까요? 클릭 시 즉시 실행
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmResetQuestion(false)}
-                            className="py-3.5 px-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all cursor-pointer"
-                          >
-                            취소
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={isQuestionSubmitting}
-                          onClick={() => setConfirmResetQuestion(true)}
-                          className="py-3.5 px-5 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 hover:text-white border border-rose-800/80 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer disabled:opacity-40 shadow-sm"
-                          title="이 반의 등록된 질문을 완전히 삭제(초기화)합니다"
-                        >
-                          <Trash2 className="w-4 h-4 text-rose-400" />
-                          {currentQClass?.name || '이 반'} 질문 초기화(삭제)
-                        </button>
-                      )
-                    )}
-
-                    {isQuestionDirtyRef.current && hasSavedQuestion && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          isQuestionDirtyRef.current = false;
-                          setQuestionInput(savedQuestionObj?.question || '');
-                        }}
-                        className="py-3.5 px-4 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 text-xs font-bold transition-all cursor-pointer"
-                      >
-                        수정 취소
-                      </button>
-                    )}
-                  </div>
-                </>
-              );
-            })()}
-          </form>
-
-          {/* Student Submitted Answers Section for this Class */}
-          <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
+          {/* STEP 4: 학생 제출 답변 현황 확인 */}
+          <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4 shadow-xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h4 className="text-base font-extrabold text-white flex items-center gap-2">
                   <CheckCheck className="w-5 h-5 text-emerald-400" />
-                  {classes.find(c => c.id === questionClassId)?.name || '선택 학급'} 학생 답변 제출 현황
+                  {classes.find(c => c.id === questionClassId)?.name || '선택 학급'} 학생 답변 제출 내역
                 </h4>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  수행자 모드에서 학생들이 작성하여 제출한 답변 목록입니다.
+                  수행자 모드에서 학생들이 질문을 읽고 제출한 답변 목록입니다.
                 </p>
               </div>
 
-              {/* Counts */}
-              {(() => {
-                const currentClassAnswers = Object.values(studentAnswers).filter(a => a.classId === questionClassId);
-                const classStudentTotal = students.filter(s => s.classId === questionClassId).length;
-                return (
-                  <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 self-start sm:self-center">
-                    제출 완료: {currentClassAnswers.length}명 / 총 {classStudentTotal}명
-                  </span>
-                );
-              })()}
+              {/* Filter */}
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-slate-400">차시 필터:</span>
+                <select
+                  value={answersFilterSession}
+                  onChange={(e) => setAnswersFilterSession(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="p-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-bold text-amber-300 focus:outline-none focus:border-amber-400 cursor-pointer"
+                >
+                  <option value="all">1~17 전체 차시 답변</option>
+                  {SESSIONS_1_TO_17.map(n => (
+                    <option key={n} value={n}>{n}차시 답변만</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            {/* Answers List */}
+            {/* Answer List */}
             {(() => {
-              const currentClassAnswers = Object.values(studentAnswers)
-                .filter(a => a.classId === questionClassId)
+              const filteredAnswers = Object.values(studentAnswers)
+                .filter(a => {
+                  if (a.classId !== questionClassId) return false;
+                  if (answersFilterSession !== 'all' && (a.session || 1) !== answersFilterSession) return false;
+                  return true;
+                })
                 .sort((a, b) => a.studentNumber - b.studentNumber);
 
-              if (currentClassAnswers.length === 0) {
+              if (filteredAnswers.length === 0) {
                 return (
                   <div className="p-10 text-center rounded-xl bg-slate-950/50 border border-dashed border-slate-800 text-slate-500 text-xs">
                     <MessageSquareQuote className="w-8 h-8 mx-auto mb-2 opacity-30 text-slate-400" />
-                    <p className="font-semibold text-slate-400 mb-0.5">아직 제출된 학생 답변이 없습니다.</p>
-                    <p className="text-slate-600">학생들이 수행자 모드에서 본인의 학번을 선택한 뒤 답변을 작성하면 이곳에 실시간으로 표시됩니다.</p>
+                    <p className="font-semibold text-slate-400 mb-0.5">제출된 학생 답변이 없습니다.</p>
+                    <p className="text-slate-600">학생들이 수행자 모드에서 질문에 답변을 작성하여 제출하면 이곳에 실시간으로 표시됩니다.</p>
                   </div>
                 );
               }
 
               return (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {currentClassAnswers.map((ans) => (
+                  {filteredAnswers.map((ans) => (
                     <div
                       key={ans.id}
-                      className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 hover:border-slate-700 transition-all flex flex-col justify-between"
+                      className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 hover:border-slate-700 transition-all flex flex-col justify-between space-y-2"
                     >
                       <div>
                         <div className="flex items-center justify-between mb-2">
@@ -1584,6 +1673,11 @@ export const TeacherMode: React.FC<Props> = ({
                             <span className="font-bold text-white text-sm">
                               {ans.studentName}
                             </span>
+                            {ans.session && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 font-extrabold">
+                                {ans.session}차시
+                              </span>
+                            )}
                           </div>
                           <span className="text-[11px] text-slate-500">
                             {new Date(ans.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

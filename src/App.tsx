@@ -7,6 +7,7 @@ import {
   Student,
   FeedbackItem,
   AiEvaluation,
+  TeacherQuestion,
   ShotType,
   CriterionAssessment
 } from './types';
@@ -18,7 +19,7 @@ import { ObserverMode } from './components/ObserverMode';
 import { OverviewMode } from './components/OverviewMode';
 import { TeacherMode } from './components/TeacherMode';
 import { saveStateToFirestore, fetchStateFromFirestore, subscribeToFirestoreState } from './lib/firebase';
-import { getDefaultAppState, getDefaultClasses, getDefaultStudents } from './lib/defaultData';
+import { getDefaultAppState, getDefaultClasses, getDefaultStudents, getDefaultSessionQuestions } from './lib/defaultData';
 import { generateClientAiFeedback } from './lib/clientAiEvaluation';
 
 // Helper to parse roster text into student objects (client fallback)
@@ -121,6 +122,51 @@ export default function App() {
   const [appState, setAppState] = useState<AppStateData>(() => {
     try {
       const cached = localStorage.getItem('shootingstar_full_backup');
+      const savedTeacherQuestions = localStorage.getItem('shootingstar_teacher_questions');
+      const savedSessionQuestions = localStorage.getItem('shootingstar_session_questions');
+      const savedClassSessionQuestions = localStorage.getItem('shootingstar_class_session_questions');
+      const savedActiveSessions = localStorage.getItem('shootingstar_active_sessions');
+
+      let sessionQ: Record<number, string> = {};
+      if (savedSessionQuestions) {
+        try {
+          const parsedSQ = JSON.parse(savedSessionQuestions);
+          if (parsedSQ && typeof parsedSQ === 'object') {
+            sessionQ = parsedSQ;
+          }
+        } catch {}
+      }
+
+      let classSessionQ: Record<string, Record<number, string>> = {};
+      if (savedClassSessionQuestions) {
+        try {
+          const parsedCSQ = JSON.parse(savedClassSessionQuestions);
+          if (parsedCSQ && typeof parsedCSQ === 'object') {
+            classSessionQ = parsedCSQ;
+          }
+        } catch {}
+      }
+
+      let teacherQ: Record<string, TeacherQuestion> = {};
+      if (savedTeacherQuestions) {
+        try {
+          const parsedTQ = JSON.parse(savedTeacherQuestions);
+          if (parsedTQ && typeof parsedTQ === 'object') {
+            teacherQ = parsedTQ;
+          }
+        } catch {}
+      }
+
+      let activeSess: Record<string, number> = {};
+      if (savedActiveSessions) {
+        try {
+          const parsedAS = JSON.parse(savedActiveSessions);
+          if (parsedAS && typeof parsedAS === 'object') {
+            activeSess = parsedAS;
+          }
+        } catch {}
+      }
+
       if (cached) {
         const parsed = JSON.parse(cached);
         if (parsed && Array.isArray(parsed.classes) && parsed.classes.length > 0) {
@@ -129,12 +175,22 @@ export default function App() {
             students: Array.isArray(parsed.students) ? parsed.students : [],
             feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks : [],
             aiEvaluations: parsed.aiEvaluations || {},
-            teacherQuestions: parsed.teacherQuestions || {},
+            teacherQuestions: { ...teacherQ, ...(parsed.teacherQuestions || {}) },
+            sessionQuestions: { ...sessionQ, ...(parsed.sessionQuestions || {}) },
+            classSessionQuestions: { ...classSessionQ, ...(parsed.classSessionQuestions || {}) },
             studentAnswers: parsed.studentAnswers || {},
-            activeSessions: parsed.activeSessions || {}
+            activeSessions: { ...activeSess, ...(parsed.activeSessions || {}) }
           };
         }
       }
+      const initial = getDefaultAppState();
+      return {
+        ...initial,
+        teacherQuestions: teacherQ,
+        sessionQuestions: sessionQ,
+        classSessionQuestions: classSessionQ,
+        activeSessions: activeSess
+      };
     } catch (e) {
       // ignore
     }
@@ -157,11 +213,41 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.data && Array.isArray(data.data.classes) && data.data.classes.length > 0) {
-          setAppState(data.data);
+          setAppState(prev => {
+            const loaded = data.data;
+            const mergedTeacherQuestions = {
+              ...(prev.teacherQuestions || {}),
+              ...(loaded.teacherQuestions || {})
+            };
+            const mergedSessionQuestions = {
+              ...(prev.sessionQuestions || {}),
+              ...(loaded.sessionQuestions || {})
+            };
+            const mergedClassSessionQuestions = {
+              ...(prev.classSessionQuestions || {}),
+              ...(loaded.classSessionQuestions || {})
+            };
+            const mergedActiveSessions = {
+              ...(prev.activeSessions || {}),
+              ...(loaded.activeSessions || {})
+            };
+            const loadedData = {
+              ...loaded,
+              teacherQuestions: mergedTeacherQuestions,
+              sessionQuestions: mergedSessionQuestions,
+              classSessionQuestions: mergedClassSessionQuestions,
+              activeSessions: mergedActiveSessions
+            };
+            try {
+              localStorage.setItem('shootingstar_full_backup', JSON.stringify(loadedData));
+              localStorage.setItem('shootingstar_teacher_questions', JSON.stringify(mergedTeacherQuestions));
+              localStorage.setItem('shootingstar_session_questions', JSON.stringify(mergedSessionQuestions));
+              localStorage.setItem('shootingstar_class_session_questions', JSON.stringify(mergedClassSessionQuestions));
+              localStorage.setItem('shootingstar_active_sessions', JSON.stringify(mergedActiveSessions));
+            } catch (e) {}
+            return loadedData;
+          });
           loadedFromServer = true;
-          try {
-            localStorage.setItem('shootingstar_full_backup', JSON.stringify(data.data));
-          } catch (e) {}
         }
       }
     } catch {
@@ -177,22 +263,57 @@ export default function App() {
           Array.isArray(firestoreData.classes) &&
           firestoreData.classes.length > 0
         ) {
-          setAppState({
-            classes: firestoreData.classes,
-            students: Array.isArray(firestoreData.students) ? firestoreData.students : [],
-            feedbacks: Array.isArray(firestoreData.feedbacks) ? firestoreData.feedbacks : [],
-            aiEvaluations: firestoreData.aiEvaluations || {},
-            teacherQuestions: firestoreData.teacherQuestions || {},
-            studentAnswers: firestoreData.studentAnswers || {},
-            activeSessions: firestoreData.activeSessions || {}
+          setAppState(prev => {
+            const mergedTeacherQuestions = {
+              ...(prev.teacherQuestions || {}),
+              ...(firestoreData.teacherQuestions || {})
+            };
+            const mergedSessionQuestions = {
+              ...(prev.sessionQuestions || {}),
+              ...(firestoreData.sessionQuestions || {})
+            };
+            const mergedClassSessionQuestions = {
+              ...(prev.classSessionQuestions || {}),
+              ...(firestoreData.classSessionQuestions || {})
+            };
+            const mergedActiveSessions = {
+              ...(prev.activeSessions || {}),
+              ...(firestoreData.activeSessions || {})
+            };
+            const mergedData = {
+              classes: firestoreData.classes,
+              students: Array.isArray(firestoreData.students) ? firestoreData.students : [],
+              feedbacks: Array.isArray(firestoreData.feedbacks) ? firestoreData.feedbacks : [],
+              aiEvaluations: firestoreData.aiEvaluations || {},
+              teacherQuestions: mergedTeacherQuestions,
+              sessionQuestions: mergedSessionQuestions,
+              classSessionQuestions: mergedClassSessionQuestions,
+              studentAnswers: firestoreData.studentAnswers || {},
+              activeSessions: mergedActiveSessions
+            };
+            try {
+              localStorage.setItem('shootingstar_full_backup', JSON.stringify(mergedData));
+              localStorage.setItem('shootingstar_teacher_questions', JSON.stringify(mergedTeacherQuestions));
+              localStorage.setItem('shootingstar_session_questions', JSON.stringify(mergedSessionQuestions));
+              localStorage.setItem('shootingstar_class_session_questions', JSON.stringify(mergedClassSessionQuestions));
+              localStorage.setItem('shootingstar_active_sessions', JSON.stringify(mergedActiveSessions));
+            } catch (e) {}
+            return mergedData;
           });
-          try {
-            localStorage.setItem('shootingstar_full_backup', JSON.stringify(firestoreData));
-          } catch (e) {}
         } else {
-          // Firestore is empty on first boot -> seed Firestore with 11 classes!
-          const defaults = getDefaultAppState();
-          saveStateToFirestore(defaults).catch(() => {});
+          // Firestore is empty on first boot -> seed Firestore with defaults merged with local questions
+          setAppState(prev => {
+            const defaults = getDefaultAppState();
+            const toSave = {
+              ...defaults,
+              teacherQuestions: prev.teacherQuestions || {},
+              sessionQuestions: prev.sessionQuestions || {},
+              classSessionQuestions: prev.classSessionQuestions || {},
+              activeSessions: prev.activeSessions || {}
+            };
+            saveStateToFirestore(toSave).catch(() => {});
+            return toSave;
+          });
         }
       } catch (fsErr) {
         console.warn('[ShootingStar] Firestore fetch error:', fsErr);
@@ -210,18 +331,43 @@ export default function App() {
     // Subscribe to Firestore for real-time peer feedback & star updates across Netlify / any client
     const unsubscribe = subscribeToFirestoreState((data) => {
       if (data && Array.isArray(data.classes) && data.classes.length > 0) {
-        setAppState({
-          classes: data.classes,
-          students: Array.isArray(data.students) ? data.students : [],
-          feedbacks: Array.isArray(data.feedbacks) ? data.feedbacks : [],
-          aiEvaluations: data.aiEvaluations || {},
-          teacherQuestions: data.teacherQuestions || {},
-          studentAnswers: data.studentAnswers || {},
-          activeSessions: data.activeSessions || {}
+        setAppState(prev => {
+          const mergedTeacherQuestions = {
+            ...(prev.teacherQuestions || {}),
+            ...(data.teacherQuestions || {})
+          };
+          const mergedSessionQuestions = {
+            ...(prev.sessionQuestions || {}),
+            ...(data.sessionQuestions || {})
+          };
+          const mergedClassSessionQuestions = {
+            ...(prev.classSessionQuestions || {}),
+            ...(data.classSessionQuestions || {})
+          };
+          const mergedActiveSessions = {
+            ...(prev.activeSessions || {}),
+            ...(data.activeSessions || {})
+          };
+          const next = {
+            classes: data.classes,
+            students: Array.isArray(data.students) ? data.students : [],
+            feedbacks: Array.isArray(data.feedbacks) ? data.feedbacks : [],
+            aiEvaluations: data.aiEvaluations || {},
+            teacherQuestions: mergedTeacherQuestions,
+            sessionQuestions: mergedSessionQuestions,
+            classSessionQuestions: mergedClassSessionQuestions,
+            studentAnswers: data.studentAnswers || {},
+            activeSessions: mergedActiveSessions
+          };
+          try {
+            localStorage.setItem('shootingstar_full_backup', JSON.stringify(next));
+            localStorage.setItem('shootingstar_teacher_questions', JSON.stringify(mergedTeacherQuestions));
+            localStorage.setItem('shootingstar_session_questions', JSON.stringify(mergedSessionQuestions));
+            localStorage.setItem('shootingstar_class_session_questions', JSON.stringify(mergedClassSessionQuestions));
+            localStorage.setItem('shootingstar_active_sessions', JSON.stringify(mergedActiveSessions));
+          } catch (e) {}
+          return next;
         });
-        try {
-          localStorage.setItem('shootingstar_full_backup', JSON.stringify(data));
-        } catch (e) {}
       }
     });
 
@@ -251,6 +397,8 @@ export default function App() {
           feedbacks: appState.feedbacks,
           aiEvaluations: appState.aiEvaluations,
           teacherQuestions: appState.teacherQuestions,
+          sessionQuestions: appState.sessionQuestions,
+          classSessionQuestions: appState.classSessionQuestions,
           studentAnswers: appState.studentAnswers,
           activeSessions: appState.activeSessions,
           savedAt: Date.now()
@@ -675,14 +823,16 @@ export default function App() {
   };
 
   // Handler: Save teacher question for a specific class
-  const handleSaveTeacherQuestion = async (classId: string, question: string): Promise<boolean> => {
+  const handleSaveTeacherQuestion = async (classId: string, question: string, session?: number): Promise<boolean> => {
     const cleanQ = (question || '').trim();
+    let currentSession = session || appState.activeSessions?.[classId] || 1;
 
     setAppState(prev => {
+      currentSession = session || prev.activeSessions?.[classId] || 1;
       const nextQ = { ...(prev.teacherQuestions || {}) };
       const nextAnswers = { ...(prev.studentAnswers || {}) };
       if (cleanQ) {
-        nextQ[classId] = { classId, question: cleanQ, updatedAt: Date.now() };
+        nextQ[classId] = { classId, question: cleanQ, session: currentSession, updatedAt: Date.now() };
       } else {
         delete nextQ[classId];
         Object.keys(nextAnswers).forEach(key => {
@@ -697,6 +847,10 @@ export default function App() {
         studentAnswers: nextAnswers
       };
       saveStateToFirestore(updated).catch(() => {});
+      try {
+        localStorage.setItem('shootingstar_full_backup', JSON.stringify(updated));
+        localStorage.setItem('shootingstar_teacher_questions', JSON.stringify(nextQ));
+      } catch (e) {}
       return updated;
     });
 
@@ -704,7 +858,139 @@ export default function App() {
       fetch(`/api/classes/${classId}/question`, {
         method: cleanQ ? 'POST' : 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: cleanQ ? JSON.stringify({ question: cleanQ }) : undefined
+        body: cleanQ ? JSON.stringify({ question: cleanQ, session: currentSession }) : undefined
+      }).catch(() => {});
+    } catch {}
+
+    return true;
+  };
+
+  // Handler: Save 1~17 session question
+  const handleSaveSessionQuestion = async (session: number, question: string): Promise<boolean> => {
+    const cleanQ = (question || '').trim();
+    setAppState(prev => {
+      const nextSessionQuestions = {
+        ...(prev.sessionQuestions || getDefaultSessionQuestions()),
+        [session]: cleanQ
+      };
+      const updated = {
+        ...prev,
+        sessionQuestions: nextSessionQuestions
+      };
+      saveStateToFirestore(updated).catch(() => {});
+      try {
+        localStorage.setItem('shootingstar_full_backup', JSON.stringify(updated));
+        localStorage.setItem('shootingstar_session_questions', JSON.stringify(nextSessionQuestions));
+      } catch (e) {}
+      return updated;
+    });
+
+    try {
+      fetch(`/api/session-questions/${session}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: cleanQ })
+      }).catch(() => {});
+    } catch {}
+
+    return true;
+  };
+
+  // Handler: Batch save 1~17 session questions
+  const handleBatchSaveSessionQuestions = async (questions: Record<number, string>): Promise<boolean> => {
+    setAppState(prev => {
+      const nextSessionQuestions = {
+        ...(prev.sessionQuestions || getDefaultSessionQuestions()),
+        ...questions
+      };
+      const updated = {
+        ...prev,
+        sessionQuestions: nextSessionQuestions
+      };
+      saveStateToFirestore(updated).catch(() => {});
+      try {
+        localStorage.setItem('shootingstar_full_backup', JSON.stringify(updated));
+        localStorage.setItem('shootingstar_session_questions', JSON.stringify(nextSessionQuestions));
+      } catch (e) {}
+      return updated;
+    });
+
+    try {
+      fetch('/api/session-questions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questions })
+      }).catch(() => {});
+    } catch {}
+
+    return true;
+  };
+
+  // Handler: Save single session question for a specific class (1~17)
+  const handleSaveClassSessionQuestion = async (classId: string, session: number, question: string): Promise<boolean> => {
+    const cleanQ = (question || '').trim();
+    setAppState(prev => {
+      const currentClassQ = prev.classSessionQuestions?.[classId] || {};
+      const updatedClassQ = {
+        ...currentClassQ,
+        [session]: cleanQ
+      };
+      const nextClassSessionQuestions = {
+        ...(prev.classSessionQuestions || {}),
+        [classId]: updatedClassQ
+      };
+      const updated = {
+        ...prev,
+        classSessionQuestions: nextClassSessionQuestions
+      };
+      saveStateToFirestore(updated).catch(() => {});
+      try {
+        localStorage.setItem('shootingstar_full_backup', JSON.stringify(updated));
+        localStorage.setItem('shootingstar_class_session_questions', JSON.stringify(nextClassSessionQuestions));
+      } catch (e) {}
+      return updated;
+    });
+
+    try {
+      fetch(`/api/classes/${classId}/session-questions/${session}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: cleanQ })
+      }).catch(() => {});
+    } catch {}
+
+    return true;
+  };
+
+  // Handler: Batch save 1~17 session questions for a specific class
+  const handleBatchSaveClassSessionQuestions = async (classId: string, questions: Record<number, string>): Promise<boolean> => {
+    setAppState(prev => {
+      const currentClassQ = prev.classSessionQuestions?.[classId] || {};
+      const updatedClassQ = {
+        ...currentClassQ,
+        ...questions
+      };
+      const nextClassSessionQuestions = {
+        ...(prev.classSessionQuestions || {}),
+        [classId]: updatedClassQ
+      };
+      const updated = {
+        ...prev,
+        classSessionQuestions: nextClassSessionQuestions
+      };
+      saveStateToFirestore(updated).catch(() => {});
+      try {
+        localStorage.setItem('shootingstar_full_backup', JSON.stringify(updated));
+        localStorage.setItem('shootingstar_class_session_questions', JSON.stringify(nextClassSessionQuestions));
+      } catch (e) {}
+      return updated;
+    });
+
+    try {
+      fetch(`/api/classes/${classId}/session-questions`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questions })
       }).catch(() => {});
     } catch {}
 
@@ -712,17 +998,20 @@ export default function App() {
   };
 
   // Handler: Save student answer to teacher question
-  const handleSaveStudentAnswer = async (classId: string, studentId: string, answer: string): Promise<boolean> => {
+  const handleSaveStudentAnswer = async (classId: string, studentId: string, answer: string, session?: number): Promise<boolean> => {
     const cleanA = (answer || '').trim();
     const student = appState.students.find(s => s.id === studentId);
-    const answerKey = `${classId}_${studentId}`;
+    const targetSession = session || appState.activeSessions?.[classId] || 1;
+    const answerKey = `${classId}_${studentId}_s${targetSession}`;
+    const legacyKey = `${classId}_${studentId}`;
     const newAnswer = {
-      id: `ans_${classId}_${studentId}`,
+      id: `ans_${classId}_${studentId}_s${targetSession}`,
       classId,
       studentId,
       studentName: student?.name || '',
       studentNumber: student?.number || 1,
       answer: cleanA,
+      session: targetSession,
       updatedAt: Date.now()
     };
 
@@ -731,10 +1020,14 @@ export default function App() {
         ...prev,
         studentAnswers: {
           ...(prev.studentAnswers || {}),
-          [answerKey]: newAnswer
+          [answerKey]: newAnswer,
+          [legacyKey]: newAnswer
         }
       };
       saveStateToFirestore(nextState).catch(() => {});
+      try {
+        localStorage.setItem('shootingstar_full_backup', JSON.stringify(nextState));
+      } catch (e) {}
       return nextState;
     });
 
@@ -742,7 +1035,7 @@ export default function App() {
       fetch(`/api/classes/${classId}/students/${studentId}/answer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answer: cleanA })
+        body: JSON.stringify({ answer: cleanA, session: targetSession })
       }).catch(() => {});
     } catch {}
 
@@ -792,14 +1085,19 @@ export default function App() {
   // Handler: Set active lesson session for a class
   const handleSetActiveSession = async (classId: string, session: number): Promise<boolean> => {
     setAppState(prev => {
+      const nextSessions = {
+        ...(prev.activeSessions || {}),
+        [classId]: session
+      };
       const nextState = {
         ...prev,
-        activeSessions: {
-          ...(prev.activeSessions || {}),
-          [classId]: session
-        }
+        activeSessions: nextSessions
       };
       saveStateToFirestore(nextState).catch(() => {});
+      try {
+        localStorage.setItem('shootingstar_full_backup', JSON.stringify(nextState));
+        localStorage.setItem('shootingstar_active_sessions', JSON.stringify(nextSessions));
+      } catch (e) {}
       return nextState;
     });
 
@@ -824,6 +1122,10 @@ export default function App() {
       });
       const nextState = { ...prev, activeSessions: nextSessions };
       saveStateToFirestore(nextState).catch(() => {});
+      try {
+        localStorage.setItem('shootingstar_full_backup', JSON.stringify(nextState));
+        localStorage.setItem('shootingstar_active_sessions', JSON.stringify(nextSessions));
+      } catch (e) {}
       return nextState;
     });
 
@@ -969,6 +1271,8 @@ export default function App() {
                 aiEvaluations={appState.aiEvaluations}
                 activeSessions={appState.activeSessions}
                 teacherQuestions={appState.teacherQuestions}
+                sessionQuestions={appState.sessionQuestions || {}}
+                classSessionQuestions={appState.classSessionQuestions || {}}
                 studentAnswers={appState.studentAnswers}
                 onRewardFeedback={handleRewardFeedback}
                 onCancelRewardFeedback={handleCancelRewardFeedback}
@@ -1004,6 +1308,8 @@ export default function App() {
                 feedbacks={appState.feedbacks}
                 activeSessions={appState.activeSessions}
                 teacherQuestions={appState.teacherQuestions}
+                sessionQuestions={appState.sessionQuestions || {}}
+                classSessionQuestions={appState.classSessionQuestions || {}}
                 studentAnswers={appState.studentAnswers}
                 onAddClass={handleAddClass}
                 onUpdateClass={handleUpdateClass}
@@ -1017,6 +1323,10 @@ export default function App() {
                 onDeleteFeedback={handleDeleteFeedback}
                 onClearFeedbacks={handleClearFeedbacks}
                 onSaveTeacherQuestion={handleSaveTeacherQuestion}
+                onSaveSessionQuestion={handleSaveSessionQuestion}
+                onBatchSaveSessionQuestions={handleBatchSaveSessionQuestions}
+                onSaveClassSessionQuestion={handleSaveClassSessionQuestion}
+                onBatchSaveClassSessionQuestions={handleBatchSaveClassSessionQuestions}
                 onSubmitTeacherFeedback={handleSubmitTeacherFeedback}
                 onSetActiveSession={handleSetActiveSession}
                 onBatchSetActiveSession={handleBatchSetActiveSession}

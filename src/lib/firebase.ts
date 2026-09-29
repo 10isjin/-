@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore, doc, getDoc, setDoc, onSnapshot, getDocFromServer } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
+import { getDefaultSessionQuestions } from "./defaultData";
 
 // Initialize Firebase App
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -46,6 +47,11 @@ export async function saveStateToFirestore(state: any): Promise<boolean> {
       feedbacks: state.feedbacks || [],
       aiEvaluations: state.aiEvaluations || {},
       teacherQuestions: state.teacherQuestions || {},
+      classSessionQuestions: state.classSessionQuestions || {},
+      sessionQuestions: {
+        ...getDefaultSessionQuestions(),
+        ...(state.sessionQuestions || {})
+      },
       studentAnswers: state.studentAnswers || {},
       activeSessions: state.activeSessions || {},
       gameScores: state.gameScores || [],

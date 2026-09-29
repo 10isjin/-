@@ -11,6 +11,7 @@ import {
   MIDDLE_SHOT_CRITERIA,
   LAYUP_SHOT_CRITERIA
 } from '../types';
+import { getDefaultSessionQuestions } from '../lib/defaultData';
 import {
   Sparkles,
   Star,
@@ -42,11 +43,13 @@ interface Props {
   aiEvaluations: Record<string, AiEvaluation>;
   activeSessions?: Record<string, number>;
   teacherQuestions?: Record<string, TeacherQuestion>;
+  sessionQuestions?: Record<number, string>;
+  classSessionQuestions?: Record<string, Record<number, string>>;
   studentAnswers?: Record<string, StudentAnswer>;
   onRewardFeedback: (feedbackId: string) => Promise<boolean>;
   onCancelRewardFeedback?: (feedbackId: string) => Promise<boolean>;
   onRequestAiFeedback: (performerId: string, performerName: string, shotType: ShotType) => Promise<AiEvaluation | null>;
-  onSaveStudentAnswer?: (classId: string, studentId: string, answer: string) => Promise<boolean>;
+  onSaveStudentAnswer?: (classId: string, studentId: string, answer: string, session?: number) => Promise<boolean>;
 }
 
 export const PerformerMode: React.FC<Props> = ({
@@ -56,6 +59,8 @@ export const PerformerMode: React.FC<Props> = ({
   aiEvaluations,
   activeSessions = {},
   teacherQuestions = {},
+  sessionQuestions = {},
+  classSessionQuestions = {},
   studentAnswers = {},
   onRewardFeedback,
   onCancelRewardFeedback,
@@ -238,10 +243,21 @@ export const PerformerMode: React.FC<Props> = ({
 
   const currentCriteria = selectedShotType === 'middle' ? MIDDLE_SHOT_CRITERIA : LAYUP_SHOT_CRITERIA;
 
-  // Student Daily Question Answer State
-  const currentClassQuestion = selectedClassId ? teacherQuestions[selectedClassId]?.question : '';
-  const studentAnswerKey = selectedClassId && selectedStudentId ? `${selectedClassId}_${selectedStudentId}` : '';
-  const existingStudentAnswer = studentAnswerKey ? studentAnswers[studentAnswerKey] : null;
+  // Student Daily Question Answer State (Automatic linkage with active class session)
+  const activeSessionForClass = selectedClassId ? (activeSessions[selectedClassId] || 1) : 1;
+  const classSpecificSessionQ = (selectedClassId && classSessionQuestions[selectedClassId]?.[activeSessionForClass]) || '';
+  const customQObj = selectedClassId ? teacherQuestions[selectedClassId] : undefined;
+  // Use custom class question if session matches or legacy class question exists
+  const legacyClassQuestion = (customQObj && (!customQObj.session || customQObj.session === activeSessionForClass))
+    ? customQObj.question
+    : '';
+  const globalSessionQuestion = sessionQuestions[activeSessionForClass] || '';
+  const currentClassQuestion = classSpecificSessionQ || legacyClassQuestion || globalSessionQuestion || '';
+
+  const sessionAnswerKey = selectedClassId && selectedStudentId ? `${selectedClassId}_${selectedStudentId}_s${activeSessionForClass}` : '';
+  const legacyAnswerKey = selectedClassId && selectedStudentId ? `${selectedClassId}_${selectedStudentId}` : '';
+  const existingStudentAnswer = (sessionAnswerKey && studentAnswers[sessionAnswerKey]) || (legacyAnswerKey && studentAnswers[legacyAnswerKey]) || null;
+  const studentAnswerKey = sessionAnswerKey || legacyAnswerKey;
 
   const [answerInput, setAnswerInput] = useState<string>('');
   const [isAnswerSubmitting, setIsAnswerSubmitting] = useState<boolean>(false);
@@ -284,7 +300,8 @@ export const PerformerMode: React.FC<Props> = ({
     const ok = await onSaveStudentAnswer(
       selectedClassId,
       currentStudent.id,
-      answerInput.trim()
+      answerInput.trim(),
+      activeSessionForClass
     );
     setIsAnswerSubmitting(false);
 
@@ -383,7 +400,7 @@ export const PerformerMode: React.FC<Props> = ({
             <div className="flex-1">
               <div className="flex flex-wrap items-center gap-2 mb-1.5">
                 <span className="text-[11px] font-black uppercase tracking-wider bg-slate-950 text-amber-300 px-2.5 py-0.5 rounded-full shadow-sm">
-                  오늘 선생님의 질문 ({currentClassObj?.name})
+                  오늘 선생님의 질문 ({currentClassObj?.name} &bull; {activeSessionForClass}차시)
                 </span>
                 <span className="text-xs font-bold text-slate-800">
                   아래에서 본인 이름을 선택한 후 답변을 작성할 수 있습니다
@@ -501,7 +518,7 @@ export const PerformerMode: React.FC<Props> = ({
                     오늘 체육 선생님의 질문
                   </span>
                   <span className="text-xs font-bold text-slate-900">
-                    ({classes.find(c => c.id === selectedClassId)?.name})
+                    ({classes.find(c => c.id === selectedClassId)?.name} &bull; {activeSessionForClass}차시)
                   </span>
                 </div>
                 <p className="text-sm sm:text-base font-black text-slate-950 leading-relaxed whitespace-pre-wrap">

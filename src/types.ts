@@ -124,6 +124,7 @@ export interface AiEvaluation {
 export interface TeacherQuestion {
   classId: string;
   question: string;
+  session?: number;
   updatedAt: number;
 }
 
@@ -134,6 +135,7 @@ export interface StudentAnswer {
   studentName: string;
   studentNumber: number;
   answer: string;
+  session?: number; // 차시 정보 (1~17)
   updatedAt: number;
 }
 
@@ -164,7 +166,9 @@ export interface AppStateData {
   feedbacks: FeedbackItem[];
   aiEvaluations: Record<string, AiEvaluation>; // key: `${performerId}_${shotType}`
   teacherQuestions?: Record<string, TeacherQuestion>; // key: classId
-  studentAnswers?: Record<string, StudentAnswer>; // key: `${classId}_${studentId}`
+  sessionQuestions?: Record<number, string>; // key: session number (1~17)
+  classSessionQuestions?: Record<string, Record<number, string>>; // key: classId -> session number (1~17) -> question text
+  studentAnswers?: Record<string, StudentAnswer>; // key: `${classId}_${studentId}` or `${classId}_${studentId}_s${session}`
   activeSessions?: Record<string, number>; // key: classId -> active session number (1, 2, 3...)
   gameScores?: GameScoreItem[]; // 별빛 버저비터 게임 랭킹 데이터
 }
