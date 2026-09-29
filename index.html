@@ -2,7 +2,7 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
@@ -16,11 +16,62 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
-      // Auto-recover if Vite dynamic chunk fails due to new deployment or cache mismatch
+      // 1. Force unregister any legacy service workers on this origin to prevent PWA cache conflicts & blank screens
+      try {
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function(registrations) {
+            for (var i = 0; i < registrations.length; i++) {
+              registrations[i].unregister();
+            }
+          }).catch(function() {});
+        }
+        if ('caches' in window) {
+          caches.keys().then(function(keys) {
+            keys.forEach(function(key) { caches.delete(key); });
+          }).catch(function() {});
+        }
+      } catch (e) {}
+
+      // 2. Auto-recover if Vite dynamic chunk fails due to new deployment or cache mismatch
       window.addEventListener('vite:preloadError', function(event) {
         console.warn('Vite preload chunk error detected, auto-refreshing page with fresh cache...', event);
         window.location.reload();
       });
+
+      // 3. Global safety fallback: if mobile browser fails to load bundle or hangs, show interactive recovery
+      function renderInitialRecovery(errorMsg) {
+        var loader = document.getElementById('initial-loader');
+        if (loader) {
+          loader.innerHTML = `
+            <div style="font-size: 36px; margin-bottom: 12px;">⚠️</div>
+            <div style="font-size: 16px; font-weight: 800; color: #f59e0b; margin-bottom: 6px;">일시적인 화면 연결 지연</div>
+            <div style="font-size: 12px; color: #94a3b8; margin-bottom: 16px; max-width: 290px; line-height: 1.5;">
+              모바일 브라우저의 이전 임시 캐시 충돌이거나 네트워크 불안정일 수 있습니다. 아래 버튼을 눌러주세요.
+            </div>
+            <button onclick="location.reload(true)" style="background: #f59e0b; color: #020617; border: none; font-weight: 800; font-size: 13px; padding: 11px 20px; border-radius: 12px; cursor: pointer; margin-bottom: 8px; width: 220px;">
+              새로고침하여 다시 접속
+            </button>
+            <br/>
+            <button onclick="try{localStorage.clear();sessionStorage.clear();}catch(e){};location.href=location.origin+location.pathname+'?reset='+Date.now();" style="background: #1e293b; color: #cbd5e1; border: 1px solid #334155; font-size: 12px; padding: 9px 16px; border-radius: 12px; cursor: pointer; width: 220px;">
+              임시 캐시 초기화 후 재접속
+            </button>
+          `;
+        }
+      }
+
+      window.addEventListener('error', function(e) {
+        // If error occurs before root is rendered
+        if (document.getElementById('initial-loader')) {
+          renderInitialRecovery(e.message);
+        }
+      });
+
+      // Timeout watchdog: If initial-loader remains visible after 8 seconds on slow mobile
+      setTimeout(function() {
+        if (document.getElementById('initial-loader')) {
+          renderInitialRecovery('로딩 지연');
+        }
+      }, 8000);
     </script>
   </head>
   <body class="bg-slate-950 text-slate-100 min-h-screen antialiased selection:bg-amber-400 selection:text-slate-950">

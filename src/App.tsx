@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, AlertCircle } from 'lucide-react';
+import { RefreshCw, AlertCircle, ExternalLink } from 'lucide-react';
 import {
   AppMode,
   AppStateData,
@@ -117,6 +117,27 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [initialLoading, setInitialLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Detect mobile in-app browser (KakaoTalk, Naver, Line, Instagram) to prevent QR session/storage hang
+  const [showInAppAlert, setShowInAppAlert] = useState<boolean>(() => {
+    if (typeof window === 'undefined' || !navigator.userAgent) return false;
+    const ua = navigator.userAgent.toLowerCase();
+    return ua.includes('kakaotalk') || ua.includes('naver') || ua.includes('line') || ua.includes('instagram') || ua.includes('daumapps') || ua.includes('fbav');
+  });
+
+  const handleOpenExternalBrowser = () => {
+    const currentUrl = window.location.href;
+    const ua = navigator.userAgent.toLowerCase();
+    const isAndroid = ua.includes('android');
+
+    if (isAndroid) {
+      const cleanUrl = currentUrl.replace(/https?:\/\//, '');
+      window.location.href = `intent://${cleanUrl}#Intent;scheme=https;package=com.android.chrome;end`;
+    } else {
+      // iOS / other mobile guidance
+      alert('화면 우측 하단의 [···] 또는 [공유] 버튼을 누르고 [Safari로 열기] 또는 [기본 브라우저로 열기]를 선택해주세요!');
+    }
+  };
 
   // App core state: initialize with localStorage or default 11 classes immediately
   const [appState, setAppState] = useState<AppStateData>(() => {
@@ -1231,6 +1252,36 @@ export default function App() {
         onRefresh={fetchState}
         isRefreshing={isRefreshing}
       />
+
+      {/* In-app Browser Notice Banner (KakaoTalk / Naver / Instagram QR access helper) */}
+      {showInAppAlert && (
+        <div className="bg-gradient-to-r from-amber-400 via-amber-300 to-amber-400 text-slate-950 px-4 py-2 text-xs font-bold flex flex-wrap items-center justify-between gap-2 z-30 shadow-md border-b border-amber-500/40">
+          <div className="flex items-center gap-2">
+            <span className="text-base">📱</span>
+            <span>
+              카카오톡/네이버 인앱 브라우저로 접속 중입니다. 동영상 촬영과 안정적인 저장을 위해 <strong>Chrome/Safari</strong> 사용을 권장합니다.
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleOpenExternalBrowser}
+              className="px-2.5 py-1 rounded-lg bg-slate-950 text-amber-300 text-[11px] font-black cursor-pointer hover:bg-slate-800 transition-all flex items-center gap-1 shadow-sm"
+            >
+              <ExternalLink className="w-3 h-3" />
+              외부 브라우저로 열기
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowInAppAlert(false)}
+              className="text-slate-800 hover:text-slate-950 font-bold px-1.5 py-0.5 text-xs cursor-pointer"
+              title="닫기"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Error alert toast if network fails */}
       {errorMessage && (
