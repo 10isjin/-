@@ -23,8 +23,11 @@ import {
   Calendar,
   Target,
   User,
-  History
+  History,
+  ShieldCheck
 } from 'lucide-react';
+import { checkCleanBot, CleanBotResult } from '../lib/cleanBot';
+import { CleanBotWarningModal } from './CleanBotWarningModal';
 
 interface Props {
   classes: Classroom[];
@@ -77,6 +80,7 @@ export const ObserverMode: React.FC<Props> = ({
     4: 'good'
   });
   const [comment, setComment] = useState<string>('');
+  const [cleanBotResult, setCleanBotResult] = useState<CleanBotResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitSuccess, setSubmitSuccess] = useState<boolean>(false);
 
@@ -149,6 +153,13 @@ export const ObserverMode: React.FC<Props> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!observerStudent || !targetStudent) return;
+
+    // CleanBot Validation: Block profanity, insults, sexual content
+    const cleanCheck = checkCleanBot(comment);
+    if (!cleanCheck.isValid) {
+      setCleanBotResult(cleanCheck);
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -739,6 +750,17 @@ export const ObserverMode: React.FC<Props> = ({
             placeholder="친구의 자세에서 눈에 띈 장점이나 고쳤으면 하는 점을 직접 적어주세요. (예: 슛 직전 무릎을 잘 굽혔는데 타점이 조금 낮았어!)"
             className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-amber-400"
           />
+
+          {/* CleanBot Safe Education Badge */}
+          <div className="flex items-center justify-between text-[11px] pt-0.5 px-1">
+            <span className="flex items-center gap-1.5 text-emerald-400/90 font-semibold">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              클린봇(CleanBot) 안전 필터 가동 중
+            </span>
+            <span className="text-slate-500 text-[10px]">
+              욕설 및 성적 비하 표현 자동 제재
+            </span>
+          </div>
         </div>
 
         {/* Submit Button */}
@@ -755,6 +777,13 @@ export const ObserverMode: React.FC<Props> = ({
           </button>
         </div>
       </form>
+
+      {/* CleanBot Warning Modal */}
+      <CleanBotWarningModal
+        isOpen={!!cleanBotResult}
+        cleanResult={cleanBotResult}
+        onClose={() => setCleanBotResult(null)}
+      />
     </div>
   );
 };

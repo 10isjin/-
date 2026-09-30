@@ -49,7 +49,8 @@ import {
   Calendar,
   Clock,
   Heart,
-  RotateCcw
+  RotateCcw,
+  ShieldCheck
 } from 'lucide-react';
 
 interface Props {
@@ -902,13 +903,22 @@ export const TeacherMode: React.FC<Props> = ({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setIsAuthenticated(false)}
-          className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 self-start sm:self-center"
-        >
-          <LogOut className="w-3.5 h-3.5" /> 교사 모드 로그아웃
-        </button>
+        <div className="flex items-center gap-2.5 self-start sm:self-center">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold shadow-sm" title="학생들의 피드백 및 답변 작성 시 욕설과 성적 표현을 100% 자동 차단합니다.">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">클린봇(CleanBot) 안전 가동 중</span>
+            <span className="sm:hidden">클린봇 작동</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsAuthenticated(false)}
+            className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800"
+          >
+            <LogOut className="w-3.5 h-3.5" /> 교사 로그아웃
+          </button>
+        </div>
       </div>
 
       {/* Action alert toast */}

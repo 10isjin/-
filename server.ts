@@ -5,7 +5,16 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  collection,
+  getDocs,
+  writeBatch
+} from "firebase/firestore";
 import firebaseConfig from "./firebase-applet-config.json";
 import {
   MIDDLE_SHOT_CRITERIA,
@@ -34,11 +43,164 @@ const firestoreDb = firebaseConfig.firestoreDatabaseId
   ? getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId)
   : getFirestore(firebaseApp);
 const FIRESTORE_STATE_DOC = doc(firestoreDb, "app_state", "global_state");
+const FIRESTORE_FEEDBACKS_COLLECTION = collection(firestoreDb, "feedbacks");
 
 // Persistent storage setup
 const DATA_DIR = path.join(process.cwd(), "data");
 const DATA_FILE = path.join(DATA_DIR, "app-state.json");
 const BACKUP_FILE = path.join(DATA_DIR, "app-state.backup.json");
+
+function cleanForFirestore<T>(data: T): any {
+  return JSON.parse(JSON.stringify(data));
+}
+
+// CleanBot Profanity, Sexual, and Hate Speech patterns
+const CLEANBOT_PROFANITY = [
+  /시[0-9_\-\.\s]*[발벌빨팔]/i,
+  /씨[0-9_\-\.\s]*[발벌빨팔]/i,
+  /ㅅ[0-9_\-\.\s]*ㅂ/i,
+  /ㅆ[0-9_\-\.\s]*ㅂ/i,
+  /tl[0-9_\-\.\s]*qkf/i,
+  /sibal|ssibal|shibal/i,
+  /병[0-9_\-\.\s]*[신씬]/i,
+  /ㅂ[0-9_\-\.\s]*ㅅ/i,
+  /지[0-9_\-\.\s]*[랄럴]/i,
+  /ㅈ[0-9_\-\.\s]*ㄹ/i,
+  /개[0-9_\-\.\s]*[새색][끼키]/i,
+  /개[0-9_\-\.\s]*자[식숙]/i,
+  /닥[0-9_\-\.\s]*[쳐처]/i,
+  /미[0-9_\-\.\s]*[친칭]/i,
+  /미[0-9_\-\.\s]*친[놈년]/i,
+  /꺼[0-9_\-\.\s]*[져저]/i,
+  /ㄲ[0-9_\-\.\s]*ㅈ/i,
+  /존[0-9_\-\.\s]*[나너]/i,
+  /졸[0-9_\-\.\s]*[라러]/i,
+  /ㅈ[0-9_\-\.\s]*ㄴ/i,
+  /조[0-9_\-\.\s]*[까까]/i,
+  /좆|좃|좇/i,
+  /씹|썅|섻/i,
+  /새[0-9_\-\.\s]*[끼키]/i,
+  /뒈[0-9_\-\.\s]*[져저]/i,
+  /뒤[0-9_\-\.\s]*[져저]/i,
+  /호[0-9_\-\.\s]*[로로][새자]/i,
+  /염[0-9_\-\.\s]*병/i,
+  /지[0-9_\-\.\s]*미/i,
+  /니[0-9_\-\.\s]*[애에][미비]/i,
+  /느[0-9_\-\.\s]*[금검][마매]/i,
+  /엠[0-9_\-\.\s]*[창챙]/i,
+  /애[0-9_\-\.\s]*[미비][창챙]/i
+];
+
+const CLEANBOT_SEXUAL = [
+  /섹[0-9_\-\.\s]*[스쓰]/i,
+  /야[0-9_\-\.\s]*[스쓰]/i,
+  /sex|sexy|porn/i,
+  /자[0-9_\-\.\s]*[지찌]/i,
+  /보[0-9_\-\.\s]*[지찌]/i,
+  /자[0-9_\-\.\s]*위/i,
+  /딸[0-9_\-\.\s]*딸/i,
+  /야[0-9_\-\.\s]*[동설]/i,
+  /성[0-9_\-\.\s]*[기폭행관계희롱]/i,
+  /강[0-9_\-\.\s]*간/i,
+  /콘[0-9_\-\.\s]*돔/i,
+  /유[0-9_\-\.\s]*[두방]/i,
+  /가[0-9_\-\.\s]*슴[0-9_\-\.\s]*만/i,
+  /엉[0-9_\-\.\s]*덩[0-9_\-\.\s]*이/i,
+  /젖[0-9_\-\.\s]*[꼭탱]/i,
+  /원[0-9_\-\.\s]*나[0-9_\-\.\s]*잇/i,
+  /따[0-9_\-\.\s]*먹/i,
+  /대[0-9_\-\.\s]*딸/i,
+  /창[0-9_\-\.\s]*[녀년]/i,
+  /걸[0-9_\-\.\s]*레[0-9_\-\.\s]*[년놈]/i,
+  /노[0-9_\-\.\s]*[출브]/i,
+  /팬[0-9_\-\.\s]*티/i
+];
+
+const CLEANBOT_HATE = [
+  /장[0-9_\-\.\s]*[애애][우인]/i,
+  /병[0-9_\-\.\s]*자/i,
+  /찐[0-9_\-\.\s]*[따따]/i,
+  /왕[0-9_\-\.\s]*[따따]/i,
+  /자[0-9_\-\.\s]*살[0-9_\-\.\s]*해/i,
+  /살[0-9_\-\.\s]*인/i,
+  /극[0-9_\-\.\s]*단[0-9_\-\.\s]*적/i,
+  /칼[0-9_\-\.\s]*빵/i,
+  /피[0-9_\-\.\s]*떡/i,
+  /틀[0-9_\-\.\s]*딱/i,
+  /한[0-9_\-\.\s]*[남녀]충/i,
+  /급[0-9_\-\.\s]*식[0-9_\-\.\s]*충/i
+];
+
+function checkServerCleanBot(text: string): { isValid: boolean; message?: string } {
+  if (!text || typeof text !== 'string') return { isValid: true };
+  const raw = text.trim();
+  const normalized = raw
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[._\-~`!@#$%^&*()+=[\]{}|;:'",<>/?\\]/g, '')
+    .replace(/\s+/g, '');
+
+  for (const p of CLEANBOT_SEXUAL) {
+    if (p.test(raw) || p.test(normalized)) {
+      return { isValid: false, message: "클린봇 감지: 성적 수치심을 유발하는 부적절한 표현이 포함되어 등록할 수 없습니다." };
+    }
+  }
+  for (const p of CLEANBOT_PROFANITY) {
+    if (p.test(raw) || p.test(normalized)) {
+      return { isValid: false, message: "클린봇 감지: 욕설 또는 비속어가 포함되어 등록할 수 없습니다." };
+    }
+  }
+  for (const p of CLEANBOT_HATE) {
+    if (p.test(raw) || p.test(normalized)) {
+      return { isValid: false, message: "클린봇 감지: 인신공격 또는 혐오 표현이 포함되어 등록할 수 없습니다." };
+    }
+  }
+  return { isValid: true };
+}
+
+function isRealServerFeedback(f: FeedbackItem): boolean {
+  if (!f || !f.id || !f.performerId) return false;
+  const str = `${f.id} ${f.performerId} ${f.observerId} ${f.performerName} ${f.observerName} ${f.comment}`.toLowerCase();
+  if (
+    str.includes('test') ||
+    str.includes('김철수') ||
+    str.includes('이영희') ||
+    str.includes('박지성') ||
+    str.includes('손흥민') ||
+    str.includes('이강인') ||
+    str.includes('테스트')
+  ) {
+    return false;
+  }
+  if (f.comment && !checkServerCleanBot(f.comment).isValid) {
+    return false;
+  }
+  return true;
+}
+
+function mergeServerFeedbacks(a: FeedbackItem[] = [], b: FeedbackItem[] = []): FeedbackItem[] {
+  const map = new Map<string, FeedbackItem>();
+  const add = (f: FeedbackItem) => {
+    if (!f || !f.id || !isRealServerFeedback(f)) return;
+    const curr = map.get(f.id);
+    if (!curr) {
+      map.set(f.id, f);
+    } else {
+      map.set(f.id, {
+        ...curr,
+        ...f,
+        favoriteRewarded: Boolean(curr.favoriteRewarded || f.favoriteRewarded),
+        favoriteRewardedAt: curr.favoriteRewardedAt || f.favoriteRewardedAt,
+        timestamp: Math.max(curr.timestamp || 0, f.timestamp || 0),
+        updatedAt: Math.max(curr.updatedAt || 0, f.updatedAt || 0)
+      });
+    }
+  };
+  (a || []).forEach(add);
+  (b || []).forEach(add);
+  return Array.from(map.values())
+    .filter(isRealServerFeedback)
+    .sort((x, y) => (y.timestamp || 0) - (x.timestamp || 0));
+}
 
 // Save state to both local disk AND Firestore Cloud Database
 function saveState(state: AppStateData) {
@@ -95,14 +257,30 @@ async function syncFromFirestore(): Promise<AppStateData | null> {
   try {
     console.log("[Firestore] Fetching persistent state from Cloud Firestore...");
     const snap = await getDoc(FIRESTORE_STATE_DOC);
+
+    // Also fetch individual feedbacks from collection
+    let collectionFeedbacks: FeedbackItem[] = [];
+    try {
+      const fbSnap = await getDocs(FIRESTORE_FEEDBACKS_COLLECTION);
+      fbSnap.forEach(d => {
+        const item = d.data() as FeedbackItem;
+        if (item && item.id) collectionFeedbacks.push(item);
+      });
+      console.log(`[Firestore] Loaded ${collectionFeedbacks.length} individual feedbacks from collection`);
+    } catch (e) {
+      console.warn("[Firestore] Error reading feedbacks collection at startup:", e);
+    }
+
     if (snap.exists()) {
       const data = snap.data();
       if (data && Array.isArray(data.classes) && Array.isArray(data.students)) {
-        console.log(`[Firestore] Successfully restored from Cloud Firestore! (${data.classes.length} classes, ${data.students.length} students, ${data.feedbacks?.length || 0} feedbacks)`);
+        const docFeedbacks = Array.isArray(data.feedbacks) ? data.feedbacks : [];
+        const combinedFeedbacks = mergeServerFeedbacks(docFeedbacks, collectionFeedbacks);
+        console.log(`[Firestore] Successfully restored from Cloud Firestore! (${data.classes.length} classes, ${data.students.length} students, ${combinedFeedbacks.length} feedbacks)`);
         return {
           classes: data.classes,
           students: data.students,
-          feedbacks: Array.isArray(data.feedbacks) ? data.feedbacks : [],
+          feedbacks: combinedFeedbacks,
           aiEvaluations: data.aiEvaluations || {},
           teacherQuestions: data.teacherQuestions || {},
           sessionQuestions: data.sessionQuestions || {},
@@ -193,6 +371,9 @@ app.get("/api/health", (_req, res) => {
 
 // 1. Get full app state
 app.get("/api/state", (_req, res) => {
+  if (appState.feedbacks) {
+    appState.feedbacks = appState.feedbacks.filter(isRealServerFeedback);
+  }
   res.json({
     success: true,
     data: appState
@@ -501,6 +682,10 @@ app.post("/api/classes/:classId/students/:studentId/answer", (req, res) => {
 
   const answerKey = `${classId}_${studentId}`;
   const cleanAnswer = (answer || "").trim();
+  const cleanCheck = checkServerCleanBot(cleanAnswer);
+  if (!cleanCheck.isValid) {
+    return res.status(400).json({ success: false, message: cleanCheck.message });
+  }
 
   appState.studentAnswers[answerKey] = {
     id: `ans-${classId}-${studentId}`,
@@ -764,8 +949,13 @@ app.post("/api/feedback", (req, res) => {
     }
   }
 
-  if (!performerId || !observerName || !shotType || !stars) {
-    return res.status(400).json({ success: false, message: "필수 정보가 누락되었습니다." });
+  const cleanCheck = checkServerCleanBot(comment || "");
+  if (!cleanCheck.isValid) {
+    return res.status(400).json({ success: false, message: cleanCheck.message });
+  }
+
+  if (!performerId || !observerName || !shotType || !stars || !isRealServerFeedback(req.body)) {
+    return res.status(400).json({ success: false, message: "등록되지 않은 학생이거나 올바르지 않은 피드백 데이터입니다." });
   }
 
   // 2) Check if feedback already exists for this (classId, performerId, observerId, shotType, session)
@@ -784,6 +974,7 @@ app.post("/api/feedback", (req, res) => {
     existingSameSession.comment = (comment || "").trim();
     existingSameSession.updatedAt = Date.now();
     saveState(appState);
+    setDoc(doc(firestoreDb, "feedbacks", existingSameSession.id), cleanForFirestore(existingSameSession), { merge: true }).catch(() => {});
     return res.json({
       success: true,
       feedback: existingSameSession,
@@ -794,7 +985,7 @@ app.post("/api/feedback", (req, res) => {
 
   // 3) Create new feedback item for this session
   const newFeedback: FeedbackItem = {
-    id: `fb-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    id: req.body.id || `fb-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     classId,
     performerId,
     performerName,
@@ -813,6 +1004,9 @@ app.post("/api/feedback", (req, res) => {
 
   appState.feedbacks.unshift(newFeedback);
   saveState(appState);
+  setDoc(doc(firestoreDb, "feedbacks", newFeedback.id), cleanForFirestore(newFeedback), { merge: true }).catch(err => {
+    console.warn("[Firestore] Error persisting individual feedback document:", err);
+  });
 
   res.json({
     success: true,
@@ -839,6 +1033,7 @@ app.put("/api/feedback/:id", (req, res) => {
   if (session !== undefined) target.session = Math.max(1, Number(session) || 1);
   target.updatedAt = Date.now();
   saveState(appState);
+  setDoc(doc(firestoreDb, "feedbacks", target.id), cleanForFirestore(target), { merge: true }).catch(() => {});
 
   res.json({
     success: true,
@@ -911,6 +1106,11 @@ app.post("/api/feedback/:id/reward", (req, res) => {
   target.favoriteRewarded = true;
   target.favoriteRewardedAt = Date.now();
   saveState(appState);
+  setDoc(doc(firestoreDb, "feedbacks", id), cleanForFirestore({
+    favoriteRewarded: true,
+    favoriteRewardedAt: target.favoriteRewardedAt,
+    updatedAt: Date.now()
+  }), { merge: true }).catch(() => {});
 
   res.json({
     success: true,
@@ -935,6 +1135,10 @@ app.post("/api/feedback/:id/cancel-reward", (req, res) => {
   target.favoriteRewarded = false;
   delete target.favoriteRewardedAt;
   saveState(appState);
+  setDoc(doc(firestoreDb, "feedbacks", id), cleanForFirestore({
+    favoriteRewarded: false,
+    updatedAt: Date.now()
+  }), { merge: true }).catch(() => {});
 
   res.json({
     success: true,
@@ -958,6 +1162,10 @@ app.delete("/api/feedback/:id/reward", (req, res) => {
   target.favoriteRewarded = false;
   delete target.favoriteRewardedAt;
   saveState(appState);
+  setDoc(doc(firestoreDb, "feedbacks", id), cleanForFirestore({
+    favoriteRewarded: false,
+    updatedAt: Date.now()
+  }), { merge: true }).catch(() => {});
 
   res.json({
     success: true,
@@ -977,6 +1185,7 @@ app.delete("/api/feedback/:id", (req, res) => {
   }
 
   saveState(appState);
+  deleteDoc(doc(firestoreDb, "feedbacks", id)).catch(() => {});
 
   res.json({
     success: true,
@@ -1010,6 +1219,19 @@ app.post("/api/feedback/clear", (req, res) => {
 
   const removedIds = new Set(toRemove.map(f => f.id));
   appState.feedbacks = appState.feedbacks.filter(f => !removedIds.has(f.id));
+
+  // Batch delete from Firestore collection
+  if (removedIds.size > 0) {
+    try {
+      const batch = writeBatch(firestoreDb);
+      removedIds.forEach(remId => {
+        batch.delete(doc(firestoreDb, "feedbacks", remId));
+      });
+      batch.commit().catch(err => {
+        console.warn("[Firestore] Batch delete error:", err);
+      });
+    } catch (e) {}
+  }
 
   const deletedCount = toRemove.length;
   const deletedStars = toRemove.reduce((sum, f) => sum + (Number(f.stars) || 0) + (f.favoriteRewarded ? 1 : 0), 0);
@@ -1488,7 +1710,7 @@ async function startServer() {
       appState = {
         classes: cloudState.classes && cloudState.classes.length > 0 ? cloudState.classes : appState.classes,
         students: cloudState.students && cloudState.students.length > 0 ? cloudState.students : appState.students,
-        feedbacks: (cloudState.feedbacks && cloudState.feedbacks.length > 0) ? cloudState.feedbacks : (appState.feedbacks || []),
+        feedbacks: mergeServerFeedbacks(appState.feedbacks || [], cloudState.feedbacks || []),
         aiEvaluations: { ...(appState.aiEvaluations || {}), ...(cloudState.aiEvaluations || {}) },
         teacherQuestions: { ...(appState.teacherQuestions || {}), ...(cloudState.teacherQuestions || {}) },
         sessionQuestions: {
@@ -1514,6 +1736,7 @@ async function startServer() {
   }
 
   if (process.env.NODE_ENV !== "production") {
+    app.use(express.static(path.join(process.cwd(), "public")));
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

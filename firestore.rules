@@ -5,6 +5,18 @@ service cloud.firestore {
     match /app_state/{stateId} {
       allow read, write: if true;
     }
+    // Individual feedbacks collection - each feedback has its own doc to prevent overwrite collisions
+    match /feedbacks/{feedbackId} {
+      allow read, write: if true;
+    }
+    // Individual student answers to teacher's questions
+    match /student_answers/{answerId} {
+      allow read, write: if true;
+    }
+    // Mini-game leaderboard scores
+    match /game_scores/{scoreId} {
+      allow read, write: if true;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

@@ -18,9 +18,104 @@ import { PerformerMode } from './components/PerformerMode';
 import { ObserverMode } from './components/ObserverMode';
 import { OverviewMode } from './components/OverviewMode';
 import { TeacherMode } from './components/TeacherMode';
-import { saveStateToFirestore, fetchStateFromFirestore, subscribeToFirestoreState } from './lib/firebase';
+import { QrShareModal } from './components/QrShareModal';
+import {
+  saveStateToFirestore,
+  fetchStateFromFirestore,
+  subscribeToFirestoreState,
+  saveFeedbackToFirestore,
+  rewardFeedbackInFirestore,
+  fetchFeedbacksFromFirestore,
+  subscribeToFeedbacksCollection,
+  clearFeedbacksInFirestore
+} from './lib/firebase';
 import { getDefaultAppState, getDefaultClasses, getDefaultStudents, getDefaultSessionQuestions } from './lib/defaultData';
 import { generateClientAiFeedback } from './lib/clientAiEvaluation';
+
+// Strictly validate that feedback is from an actual real student (blocks all dummy/test artifacts)
+export function isRealStudentFeedback(f: FeedbackItem, students?: Student[]): boolean {
+  if (!f || !f.id || !f.performerId) return false;
+  const str = `${f.id} ${f.performerId} ${f.observerId} ${f.performerName} ${f.observerName} ${f.comment}`.toLowerCase();
+  if (
+    str.includes('test') ||
+    str.includes('김철수') ||
+    str.includes('이영희') ||
+    str.includes('박지성') ||
+    str.includes('손흥민') ||
+    str.includes('이강인') ||
+    str.includes('테스트')
+  ) {
+    return false;
+  }
+  if (students && students.length > 0) {
+    const isPerformerKnown = students.some(s => s.id === f.performerId || s.name === f.performerName);
+    if (!isPerformerKnown) return false;
+  }
+  return true;
+}
+
+// Dedicated local vault for permanent feedback & star retention
+export function loadFeedbacksFromVault(students?: Student[]): FeedbackItem[] {
+  try {
+    const raw = localStorage.getItem('shootingstar_feedbacks_vault');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const cleaned = parsed.filter(f => isRealStudentFeedback(f, students));
+        if (cleaned.length !== parsed.length) {
+          saveFeedbacksToVault(cleaned);
+        }
+        return cleaned;
+      }
+    }
+  } catch {}
+  return [];
+}
+
+export function saveFeedbacksToVault(feedbacks: FeedbackItem[]) {
+  try {
+    const cleaned = feedbacks.filter(f => isRealStudentFeedback(f));
+    localStorage.setItem('shootingstar_feedbacks_vault', JSON.stringify(cleaned));
+  } catch (e) {
+    console.warn('[Vault] Quota exceeded on feedbacks vault:', e);
+  }
+}
+
+// Bi-directional merge by ID: guarantees no feedback or star is EVER lost or overwritten by empty arrays
+export function mergeFeedbackArrays(
+  existing: FeedbackItem[] = [],
+  incoming: FeedbackItem[] = [],
+  vault: FeedbackItem[] = [],
+  students?: Student[]
+): FeedbackItem[] {
+  const map = new Map<string, FeedbackItem>();
+  const add = (f: FeedbackItem) => {
+    if (!isRealStudentFeedback(f, students)) return;
+    const curr = map.get(f.id);
+    if (!curr) {
+      map.set(f.id, f);
+    } else {
+      const currTime = Math.max(curr.updatedAt || 0, curr.timestamp || 0);
+      const newTime = Math.max(f.updatedAt || 0, f.timestamp || 0);
+      const newer = newTime >= currTime ? f : curr;
+      const older = newTime >= currTime ? curr : f;
+      map.set(f.id, {
+        ...older,
+        ...newer,
+        favoriteRewarded: newer.favoriteRewarded !== undefined ? newer.favoriteRewarded : older.favoriteRewarded,
+        favoriteRewardedAt: newer.favoriteRewardedAt || older.favoriteRewardedAt,
+        timestamp: Math.min(curr.timestamp || Infinity, f.timestamp || Infinity) === Infinity
+          ? Date.now()
+          : Math.min(curr.timestamp || Infinity, f.timestamp || Infinity),
+        updatedAt: Math.max(curr.updatedAt || 0, f.updatedAt || 0)
+      });
+    }
+  };
+  (vault || []).forEach(add);
+  (existing || []).forEach(add);
+  (incoming || []).forEach(add);
+  return Array.from(map.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+}
 
 // Helper to parse roster text into student objects (client fallback)
 function parseStudentRosterClient(rawText: string, classId: string): Student[] {
@@ -117,6 +212,7 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [initialLoading, setInitialLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isQrModalOpen, setIsQrModalOpen] = useState<boolean>(false);
 
   // Detect mobile in-app browser (KakaoTalk, Naver, Line, Instagram) to prevent QR session/storage hang
   const [showInAppAlert, setShowInAppAlert] = useState<boolean>(() => {
@@ -188,13 +284,15 @@ export default function App() {
         } catch {}
       }
 
+      const vaultFeedbacks = loadFeedbacksFromVault();
       if (cached) {
         const parsed = JSON.parse(cached);
         if (parsed && Array.isArray(parsed.classes) && parsed.classes.length > 0) {
+          const initialFeedbacks = mergeFeedbackArrays(parsed.feedbacks || [], vaultFeedbacks);
           return {
             classes: parsed.classes,
             students: Array.isArray(parsed.students) ? parsed.students : [],
-            feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks : [],
+            feedbacks: initialFeedbacks,
             aiEvaluations: parsed.aiEvaluations || {},
             teacherQuestions: { ...teacherQ, ...(parsed.teacherQuestions || {}) },
             sessionQuestions: { ...sessionQ, ...(parsed.sessionQuestions || {}) },
@@ -207,6 +305,7 @@ export default function App() {
       const initial = getDefaultAppState();
       return {
         ...initial,
+        feedbacks: vaultFeedbacks,
         teacherQuestions: teacherQ,
         sessionQuestions: sessionQ,
         classSessionQuestions: classSessionQ,
@@ -236,6 +335,9 @@ export default function App() {
         if (data.success && data.data && Array.isArray(data.data.classes) && data.data.classes.length > 0) {
           setAppState(prev => {
             const loaded = data.data;
+            const vaultFeedbacks = loadFeedbacksFromVault();
+            const mergedFeedbacks = mergeFeedbackArrays(prev.feedbacks, loaded.feedbacks, vaultFeedbacks);
+            saveFeedbacksToVault(mergedFeedbacks);
             const mergedTeacherQuestions = {
               ...(prev.teacherQuestions || {}),
               ...(loaded.teacherQuestions || {})
@@ -254,6 +356,7 @@ export default function App() {
             };
             const loadedData = {
               ...loaded,
+              feedbacks: mergedFeedbacks,
               teacherQuestions: mergedTeacherQuestions,
               sessionQuestions: mergedSessionQuestions,
               classSessionQuestions: mergedClassSessionQuestions,
@@ -285,6 +388,9 @@ export default function App() {
           firestoreData.classes.length > 0
         ) {
           setAppState(prev => {
+            const vaultFeedbacks = loadFeedbacksFromVault();
+            const mergedFeedbacks = mergeFeedbackArrays(prev.feedbacks, firestoreData.feedbacks, vaultFeedbacks);
+            saveFeedbacksToVault(mergedFeedbacks);
             const mergedTeacherQuestions = {
               ...(prev.teacherQuestions || {}),
               ...(firestoreData.teacherQuestions || {})
@@ -304,7 +410,7 @@ export default function App() {
             const mergedData = {
               classes: firestoreData.classes,
               students: Array.isArray(firestoreData.students) ? firestoreData.students : [],
-              feedbacks: Array.isArray(firestoreData.feedbacks) ? firestoreData.feedbacks : [],
+              feedbacks: mergedFeedbacks,
               aiEvaluations: firestoreData.aiEvaluations || {},
               teacherQuestions: mergedTeacherQuestions,
               sessionQuestions: mergedSessionQuestions,
@@ -322,19 +428,8 @@ export default function App() {
             return mergedData;
           });
         } else {
-          // Firestore is empty on first boot -> seed Firestore with defaults merged with local questions
-          setAppState(prev => {
-            const defaults = getDefaultAppState();
-            const toSave = {
-              ...defaults,
-              teacherQuestions: prev.teacherQuestions || {},
-              sessionQuestions: prev.sessionQuestions || {},
-              classSessionQuestions: prev.classSessionQuestions || {},
-              activeSessions: prev.activeSessions || {}
-            };
-            saveStateToFirestore(toSave).catch(() => {});
-            return toSave;
-          });
+          // If Firestore is empty or quota exceeded, DO NOT WIPE STATE! Keep all existing feedbacks and students intact!
+          console.warn('[ShootingStar] Firestore fetch returned empty or failed. Preserving existing client state.');
         }
       } catch (fsErr) {
         console.warn('[ShootingStar] Firestore fetch error:', fsErr);
@@ -349,10 +444,29 @@ export default function App() {
   useEffect(() => {
     fetchState(true);
 
-    // Subscribe to Firestore for real-time peer feedback & star updates across Netlify / any client
-    const unsubscribe = subscribeToFirestoreState((data) => {
+    // 1. Dedicated real-time subscriber for feedbacks collection (isolated documents, no collisions!)
+    const unsubFeedbacks = subscribeToFeedbacksCollection((incomingFeedbacks) => {
+      if (Array.isArray(incomingFeedbacks)) {
+        setAppState(prev => {
+          const vaultFeedbacks = loadFeedbacksFromVault(prev.students);
+          const mergedFeedbacks = mergeFeedbackArrays(prev.feedbacks, incomingFeedbacks, vaultFeedbacks, prev.students);
+          saveFeedbacksToVault(mergedFeedbacks);
+          return {
+            ...prev,
+            feedbacks: mergedFeedbacks
+          };
+        });
+      }
+    });
+
+    // 2. Real-time subscriber for global classes, questions, sessions
+    const unsubState = subscribeToFirestoreState((data) => {
       if (data && Array.isArray(data.classes) && data.classes.length > 0) {
         setAppState(prev => {
+          const currentStudents = Array.isArray(data.students) && data.students.length > 0 ? data.students : prev.students;
+          const vaultFeedbacks = loadFeedbacksFromVault(currentStudents);
+          const mergedFeedbacks = mergeFeedbackArrays(prev.feedbacks, data.feedbacks || [], vaultFeedbacks, currentStudents);
+          saveFeedbacksToVault(mergedFeedbacks);
           const mergedTeacherQuestions = {
             ...(prev.teacherQuestions || {}),
             ...(data.teacherQuestions || {})
@@ -371,8 +485,8 @@ export default function App() {
           };
           const next = {
             classes: data.classes,
-            students: Array.isArray(data.students) ? data.students : [],
-            feedbacks: Array.isArray(data.feedbacks) ? data.feedbacks : [],
+            students: currentStudents,
+            feedbacks: mergedFeedbacks,
             aiEvaluations: data.aiEvaluations || {},
             teacherQuestions: mergedTeacherQuestions,
             sessionQuestions: mergedSessionQuestions,
@@ -402,20 +516,49 @@ export default function App() {
     window.addEventListener('focus', handleVisibility);
 
     return () => {
-      unsubscribe();
+      unsubFeedbacks();
+      unsubState();
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
     };
   }, [fetchState]);
 
+  // Self-healing: permanently purge any legacy dummy or test feedbacks from local storage
+  useEffect(() => {
+    try {
+      const vaultRaw = localStorage.getItem('shootingstar_feedbacks_vault');
+      if (vaultRaw) {
+        const parsed = JSON.parse(vaultRaw);
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter(f => isRealStudentFeedback(f, appState.students));
+          if (filtered.length !== parsed.length) {
+            localStorage.setItem('shootingstar_feedbacks_vault', JSON.stringify(filtered));
+          }
+        }
+      }
+      const backupRaw = localStorage.getItem('shootingstar_full_backup');
+      if (backupRaw) {
+        const parsed = JSON.parse(backupRaw);
+        if (parsed && Array.isArray(parsed.feedbacks)) {
+          const filtered = parsed.feedbacks.filter((f: any) => isRealStudentFeedback(f, appState.students));
+          if (filtered.length !== parsed.feedbacks.length) {
+            parsed.feedbacks = filtered;
+            localStorage.setItem('shootingstar_full_backup', JSON.stringify(parsed));
+          }
+        }
+      }
+    } catch (e) {}
+  }, [appState.students]);
+
   // Client-side local backup to preserve complete state
   useEffect(() => {
     if (appState.classes.length > 0) {
       try {
+        const cleanFeedbacks = (appState.feedbacks || []).filter(f => isRealStudentFeedback(f, appState.students));
         const fullBackup = {
           classes: appState.classes,
           students: appState.students,
-          feedbacks: appState.feedbacks,
+          feedbacks: cleanFeedbacks,
           aiEvaluations: appState.aiEvaluations,
           teacherQuestions: appState.teacherQuestions,
           sessionQuestions: appState.sessionQuestions,
@@ -464,7 +607,7 @@ export default function App() {
       timestamp: Date.now()
     };
 
-    // Optimistically update local state & Cloud Firestore
+    // Optimistically update local state, local vault & Cloud Firestore
     setAppState(prev => {
       const existsIndex = prev.feedbacks.findIndex(f => f.id === feedbackId);
       let nextFeedbacks: FeedbackItem[];
@@ -474,17 +617,21 @@ export default function App() {
       } else {
         nextFeedbacks = [newFeedback, ...prev.feedbacks];
       }
-      const nextState = { ...prev, feedbacks: nextFeedbacks };
-      saveStateToFirestore(nextState).catch(() => {});
-      return nextState;
+      saveFeedbacksToVault(nextFeedbacks);
+      return { ...prev, feedbacks: nextFeedbacks };
     });
 
-    // Try posting to backend server if available
+    // 2. Direct individual Firestore document persistence (isolated document, no collisions!)
+    saveFeedbackToFirestore(newFeedback).catch(err => {
+      console.warn('[Firestore] Error saving individual feedback doc:', err);
+    });
+
+    // 3. Post to backend server with exact feedback ID
     try {
       fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ ...payload, id: feedbackId })
       }).catch(() => {});
     } catch {}
 
@@ -494,15 +641,18 @@ export default function App() {
   // Handler: Reward 1 star back to friend
   const handleRewardFeedback = async (feedbackId: string): Promise<boolean> => {
     setAppState(prev => {
-      const nextState = {
+      const nextFeedbacks = prev.feedbacks.map(f =>
+        f.id === feedbackId ? { ...f, favoriteRewarded: true, favoriteRewardedAt: Date.now() } : f
+      );
+      saveFeedbacksToVault(nextFeedbacks);
+      return {
         ...prev,
-        feedbacks: prev.feedbacks.map(f =>
-          f.id === feedbackId ? { ...f, favoriteRewarded: true, favoriteRewardedAt: Date.now() } : f
-        )
+        feedbacks: nextFeedbacks
       };
-      saveStateToFirestore(nextState).catch(() => {});
-      return nextState;
     });
+
+    // Direct Firestore individual doc update
+    rewardFeedbackInFirestore(feedbackId, true, Date.now()).catch(() => {});
 
     try {
       fetch(`/api/feedback/${feedbackId}/reward`, {
@@ -525,10 +675,12 @@ export default function App() {
         }
         return f;
       });
-      const nextState = { ...prev, feedbacks: nextFeedbacks };
-      saveStateToFirestore(nextState).catch(() => {});
-      return nextState;
+      saveFeedbacksToVault(nextFeedbacks);
+      return { ...prev, feedbacks: nextFeedbacks };
     });
+
+    // Direct Firestore individual doc update
+    rewardFeedbackInFirestore(feedbackId, false).catch(() => {});
 
     try {
       fetch(`/api/feedback/${feedbackId}/cancel-reward`, {
@@ -1212,8 +1364,19 @@ export default function App() {
         feedbacks: updatedFeedbacks,
         aiEvaluations: nextAiEvals
       };
+      saveFeedbacksToVault(updatedFeedbacks);
       saveStateToFirestore(nextState).catch(() => {});
       return nextState;
+    });
+
+    // Delete matching documents in Firestore collection
+    clearFeedbacksInFirestore({
+      classId: payload.classId,
+      shotType: payload.shotType,
+      studentId: payload.studentId,
+      session: payload.session === 'all' ? 'all' : Number(payload.session)
+    }).catch(err => {
+      console.warn('[Firestore] Error clearing feedbacks in Firestore collection:', err);
     });
 
     try {
@@ -1251,6 +1414,13 @@ export default function App() {
         onSelectMode={setCurrentMode}
         onRefresh={fetchState}
         isRefreshing={isRefreshing}
+        onOpenQrModal={() => setIsQrModalOpen(true)}
+      />
+
+      {/* QR Code Quick Share Modal */}
+      <QrShareModal
+        isOpen={isQrModalOpen}
+        onClose={() => setIsQrModalOpen(false)}
       />
 
       {/* In-app Browser Notice Banner (KakaoTalk / Naver / Instagram QR access helper) */}

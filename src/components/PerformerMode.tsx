@@ -33,8 +33,11 @@ import {
   Edit3,
   Calendar,
   Lock,
-  RotateCcw
+  RotateCcw,
+  ShieldCheck
 } from 'lucide-react';
+import { checkCleanBot, CleanBotResult } from '../lib/cleanBot';
+import { CleanBotWarningModal } from './CleanBotWarningModal';
 
 interface Props {
   classes: Classroom[];
@@ -260,6 +263,7 @@ export const PerformerMode: React.FC<Props> = ({
   const studentAnswerKey = sessionAnswerKey || legacyAnswerKey;
 
   const [answerInput, setAnswerInput] = useState<string>('');
+  const [cleanBotResult, setCleanBotResult] = useState<CleanBotResult | null>(null);
   const [isAnswerSubmitting, setIsAnswerSubmitting] = useState<boolean>(false);
   const [answerSuccessMsg, setAnswerSuccessMsg] = useState<string>('');
   const [isEditingAnswer, setIsEditingAnswer] = useState<boolean>(false);
@@ -293,6 +297,13 @@ export const PerformerMode: React.FC<Props> = ({
     if (!currentStudent || !selectedClassId || !onSaveStudentAnswer) return;
     if (!answerInput.trim()) {
       alert('답변 내용을 입력해주세요.');
+      return;
+    }
+
+    // CleanBot Validation
+    const cleanCheck = checkCleanBot(answerInput);
+    if (!cleanCheck.isValid) {
+      setCleanBotResult(cleanCheck);
       return;
     }
 
@@ -572,6 +583,16 @@ export const PerformerMode: React.FC<Props> = ({
                     placeholder="선생님의 질문에 대한 나의 생각이나 오늘 슛 연습에서 깨달은 점을 적어보세요..."
                     className="w-full p-3.5 rounded-xl bg-slate-950 text-white placeholder:text-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-slate-950 leading-relaxed border border-slate-900"
                   />
+                  {/* CleanBot Safe Education Badge */}
+                  <div className="flex items-center justify-between text-[11px] pt-1.5 px-0.5 text-slate-900 font-bold">
+                    <span className="flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-slate-950" />
+                      클린봇 안전 필터 가동 중
+                    </span>
+                    <span className="text-[10px] text-slate-800">
+                      욕설 및 성적 비하 표현 자동 제재
+                    </span>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-[11px] font-bold text-slate-900">
@@ -1324,6 +1345,13 @@ export const PerformerMode: React.FC<Props> = ({
           </div>
         </div>
       </div>
+
+      {/* CleanBot Warning Modal */}
+      <CleanBotWarningModal
+        isOpen={!!cleanBotResult}
+        cleanResult={cleanBotResult}
+        onClose={() => setCleanBotResult(null)}
+      />
     </div>
   );
 };
