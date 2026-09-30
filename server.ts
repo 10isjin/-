@@ -159,18 +159,6 @@ function checkServerCleanBot(text: string): { isValid: boolean; message?: string
 
 function isRealServerFeedback(f: FeedbackItem): boolean {
   if (!f || !f.id || !f.performerId) return false;
-  const str = `${f.id} ${f.performerId} ${f.observerId} ${f.performerName} ${f.observerName} ${f.comment}`.toLowerCase();
-  if (
-    str.includes('test') ||
-    str.includes('김철수') ||
-    str.includes('이영희') ||
-    str.includes('박지성') ||
-    str.includes('손흥민') ||
-    str.includes('이강인') ||
-    str.includes('테스트')
-  ) {
-    return false;
-  }
   if (f.comment && !checkServerCleanBot(f.comment).isValid) {
     return false;
   }
@@ -954,8 +942,8 @@ app.post("/api/feedback", (req, res) => {
     return res.status(400).json({ success: false, message: cleanCheck.message });
   }
 
-  if (!performerId || !observerName || !shotType || !stars || !isRealServerFeedback(req.body)) {
-    return res.status(400).json({ success: false, message: "등록되지 않은 학생이거나 올바르지 않은 피드백 데이터입니다." });
+  if (!performerId || !observerName || !shotType || !stars) {
+    return res.status(400).json({ success: false, message: "필수 정보가 누락되었습니다." });
   }
 
   // 2) Check if feedback already exists for this (classId, performerId, observerId, shotType, session)

@@ -32,41 +32,19 @@ import {
 import { getDefaultAppState, getDefaultClasses, getDefaultStudents, getDefaultSessionQuestions } from './lib/defaultData';
 import { generateClientAiFeedback } from './lib/clientAiEvaluation';
 
-// Strictly validate that feedback is from an actual real student (blocks all dummy/test artifacts)
-export function isRealStudentFeedback(f: FeedbackItem, students?: Student[]): boolean {
+// Validate feedback integrity
+export function isRealStudentFeedback(f: FeedbackItem): boolean {
   if (!f || !f.id || !f.performerId) return false;
-  const str = `${f.id} ${f.performerId} ${f.observerId} ${f.performerName} ${f.observerName} ${f.comment}`.toLowerCase();
-  if (
-    str.includes('test') ||
-    str.includes('김철수') ||
-    str.includes('이영희') ||
-    str.includes('박지성') ||
-    str.includes('손흥민') ||
-    str.includes('이강인') ||
-    str.includes('테스트')
-  ) {
-    return false;
-  }
-  if (students && students.length > 0) {
-    const isPerformerKnown = students.some(s => s.id === f.performerId || s.name === f.performerName);
-    if (!isPerformerKnown) return false;
-  }
   return true;
 }
 
 // Dedicated local vault for permanent feedback & star retention
-export function loadFeedbacksFromVault(students?: Student[]): FeedbackItem[] {
+export function loadFeedbacksFromVault(): FeedbackItem[] {
   try {
     const raw = localStorage.getItem('shootingstar_feedbacks_vault');
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        const cleaned = parsed.filter(f => isRealStudentFeedback(f, students));
-        if (cleaned.length !== parsed.length) {
-          saveFeedbacksToVault(cleaned);
-        }
-        return cleaned;
-      }
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
   } catch {}
   return [];
@@ -74,8 +52,7 @@ export function loadFeedbacksFromVault(students?: Student[]): FeedbackItem[] {
 
 export function saveFeedbacksToVault(feedbacks: FeedbackItem[]) {
   try {
-    const cleaned = feedbacks.filter(f => isRealStudentFeedback(f));
-    localStorage.setItem('shootingstar_feedbacks_vault', JSON.stringify(cleaned));
+    localStorage.setItem('shootingstar_feedbacks_vault', JSON.stringify(feedbacks));
   } catch (e) {
     console.warn('[Vault] Quota exceeded on feedbacks vault:', e);
   }
@@ -85,12 +62,11 @@ export function saveFeedbacksToVault(feedbacks: FeedbackItem[]) {
 export function mergeFeedbackArrays(
   existing: FeedbackItem[] = [],
   incoming: FeedbackItem[] = [],
-  vault: FeedbackItem[] = [],
-  students?: Student[]
+  vault: FeedbackItem[] = []
 ): FeedbackItem[] {
   const map = new Map<string, FeedbackItem>();
   const add = (f: FeedbackItem) => {
-    if (!isRealStudentFeedback(f, students)) return;
+    if (!f || !f.id) return;
     const curr = map.get(f.id);
     if (!curr) {
       map.set(f.id, f);
@@ -448,8 +424,8 @@ export default function App() {
     const unsubFeedbacks = subscribeToFeedbacksCollection((incomingFeedbacks) => {
       if (Array.isArray(incomingFeedbacks)) {
         setAppState(prev => {
-          const vaultFeedbacks = loadFeedbacksFromVault(prev.students);
-          const mergedFeedbacks = mergeFeedbackArrays(prev.feedbacks, incomingFeedbacks, vaultFeedbacks, prev.students);
+          const vaultFeedbacks = loadFeedbacksFromVault();
+          const mergedFeedbacks = mergeFeedbackArrays(prev.feedbacks, incomingFeedbacks, vaultFeedbacks);
           saveFeedbacksToVault(mergedFeedbacks);
           return {
             ...prev,
@@ -464,8 +440,8 @@ export default function App() {
       if (data && Array.isArray(data.classes) && data.classes.length > 0) {
         setAppState(prev => {
           const currentStudents = Array.isArray(data.students) && data.students.length > 0 ? data.students : prev.students;
-          const vaultFeedbacks = loadFeedbacksFromVault(currentStudents);
-          const mergedFeedbacks = mergeFeedbackArrays(prev.feedbacks, data.feedbacks || [], vaultFeedbacks, currentStudents);
+          const vaultFeedbacks = loadFeedbacksFromVault();
+          const mergedFeedbacks = mergeFeedbackArrays(prev.feedbacks, data.feedbacks || [], vaultFeedbacks);
           saveFeedbacksToVault(mergedFeedbacks);
           const mergedTeacherQuestions = {
             ...(prev.teacherQuestions || {}),
@@ -523,42 +499,14 @@ export default function App() {
     };
   }, [fetchState]);
 
-  // Self-healing: permanently purge any legacy dummy or test feedbacks from local storage
-  useEffect(() => {
-    try {
-      const vaultRaw = localStorage.getItem('shootingstar_feedbacks_vault');
-      if (vaultRaw) {
-        const parsed = JSON.parse(vaultRaw);
-        if (Array.isArray(parsed)) {
-          const filtered = parsed.filter(f => isRealStudentFeedback(f, appState.students));
-          if (filtered.length !== parsed.length) {
-            localStorage.setItem('shootingstar_feedbacks_vault', JSON.stringify(filtered));
-          }
-        }
-      }
-      const backupRaw = localStorage.getItem('shootingstar_full_backup');
-      if (backupRaw) {
-        const parsed = JSON.parse(backupRaw);
-        if (parsed && Array.isArray(parsed.feedbacks)) {
-          const filtered = parsed.feedbacks.filter((f: any) => isRealStudentFeedback(f, appState.students));
-          if (filtered.length !== parsed.feedbacks.length) {
-            parsed.feedbacks = filtered;
-            localStorage.setItem('shootingstar_full_backup', JSON.stringify(parsed));
-          }
-        }
-      }
-    } catch (e) {}
-  }, [appState.students]);
-
   // Client-side local backup to preserve complete state
   useEffect(() => {
     if (appState.classes.length > 0) {
       try {
-        const cleanFeedbacks = (appState.feedbacks || []).filter(f => isRealStudentFeedback(f, appState.students));
         const fullBackup = {
           classes: appState.classes,
           students: appState.students,
-          feedbacks: cleanFeedbacks,
+          feedbacks: appState.feedbacks,
           aiEvaluations: appState.aiEvaluations,
           teacherQuestions: appState.teacherQuestions,
           sessionQuestions: appState.sessionQuestions,
