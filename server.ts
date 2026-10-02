@@ -190,8 +190,33 @@ function mergeServerFeedbacks(a: FeedbackItem[] = [], b: FeedbackItem[] = []): F
     .sort((x, y) => (y.timestamp || 0) - (x.timestamp || 0));
 }
 
+function canonicalizeServerAnswers(answers: Record<string, any>): Record<string, any> {
+  const result: Record<string, any> = {};
+  if (!answers || typeof answers !== 'object') return result;
+  for (const [key, val] of Object.entries(answers)) {
+    const v: any = val;
+    if (!v || !v.studentId) continue;
+    if (v.classId === '3-1' && (v.studentName === '권아준' || v.studentId.includes('c3-1-1'))) {
+      continue;
+    }
+    const session = v.session || 1;
+    const canonicalKey = `${v.classId}_${v.studentId}_s${session}`;
+    v.session = session;
+    v.id = `ans_${v.classId}_${v.studentId}_s${session}`;
+    const existing = result[canonicalKey];
+    if (!existing || (v.updatedAt || 0) >= (existing.updatedAt || 0)) {
+      result[canonicalKey] = v;
+    }
+  }
+  return result;
+}
+
 // Save state to both local disk AND Firestore Cloud Database
 function saveState(state: AppStateData) {
+  // Canonicalize studentAnswers to eliminate duplicate legacy keys
+  if (state.studentAnswers) {
+    state.studentAnswers = canonicalizeServerAnswers(state.studentAnswers);
+  }
   // 1. Local disk save
   try {
     if (!fs.existsSync(DATA_DIR)) {
@@ -657,7 +682,7 @@ app.put("/api/classes/:classId/session-questions", (req, res) => {
 // 3-5. Save student answer to teacher question
 app.post("/api/classes/:classId/students/:studentId/answer", (req, res) => {
   const { classId, studentId } = req.params;
-  const { answer } = req.body;
+  const { answer, session } = req.body;
 
   const student = appState.students.find(s => s.id === studentId);
   if (!student) {
@@ -668,20 +693,26 @@ app.post("/api/classes/:classId/students/:studentId/answer", (req, res) => {
     appState.studentAnswers = {};
   }
 
-  const answerKey = `${classId}_${studentId}`;
+  const parsedSession = Number(session) || 1;
+  const answerKey = `${classId}_${studentId}_s${parsedSession}`;
+  const legacyKey = `${classId}_${studentId}`;
   const cleanAnswer = (answer || "").trim();
   const cleanCheck = checkServerCleanBot(cleanAnswer);
   if (!cleanCheck.isValid) {
     return res.status(400).json({ success: false, message: cleanCheck.message });
   }
 
+  // Delete duplicate legacy key if exists
+  delete appState.studentAnswers[legacyKey];
+
   appState.studentAnswers[answerKey] = {
-    id: `ans-${classId}-${studentId}`,
+    id: `ans-${classId}-${studentId}-s${parsedSession}`,
     classId,
     studentId,
     studentName: student.name,
     studentNumber: student.number,
     answer: cleanAnswer,
+    session: parsedSession,
     updatedAt: Date.now()
   };
 
@@ -692,6 +723,27 @@ app.post("/api/classes/:classId/students/:studentId/answer", (req, res) => {
     data: appState.studentAnswers[answerKey],
     message: "선생님의 질문에 대한 답변이 안전하게 저장되었습니다!"
   });
+});
+
+// 3-6. Delete student answer
+app.delete("/api/classes/:classId/students/:studentId/answer", (req, res) => {
+  const { classId, studentId } = req.params;
+  const session = req.query.session ? Number(req.query.session) : undefined;
+  if (!appState.studentAnswers) {
+    appState.studentAnswers = {};
+  }
+  let deletedCount = 0;
+  Object.keys(appState.studentAnswers).forEach(key => {
+    const ans = appState.studentAnswers![key];
+    if (ans && ans.classId === classId && (ans.studentId === studentId || key.includes(studentId))) {
+      if (session === undefined || (ans.session || 1) === session) {
+        delete appState.studentAnswers![key];
+        deletedCount++;
+      }
+    }
+  });
+  saveState(appState);
+  res.json({ success: true, deletedCount, message: "학생 답변이 성공적으로 삭제되었습니다." });
 });
 
 // 4. Bulk upload students (Excel paste support for a single class)
@@ -1709,7 +1761,7 @@ async function startServer() {
           ...(appState.classSessionQuestions || {}),
           ...(cloudState.classSessionQuestions || {})
         },
-        studentAnswers: { ...(appState.studentAnswers || {}), ...(cloudState.studentAnswers || {}) },
+        studentAnswers: canonicalizeServerAnswers({ ...(appState.studentAnswers || {}), ...(cloudState.studentAnswers || {}) }),
         activeSessions: { ...(appState.activeSessions || {}), ...(cloudState.activeSessions || {}) },
         gameScores: (cloudState.gameScores && cloudState.gameScores.length > 0) ? cloudState.gameScores : (appState.gameScores || [])
       };

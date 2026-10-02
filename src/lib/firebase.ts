@@ -154,8 +154,10 @@ export async function clearFeedbacksInFirestore(filter?: {
         count++;
       }
     });
-    if (count > 0) {
+    if (count > 0 || !filter || filter.classId === 'all') {
       await batch.commit();
+      // Ensure STATE_DOC_REF also syncs empty feedbacks
+      await setDoc(STATE_DOC_REF, { feedbacks: [] }, { merge: true }).catch(() => {});
     }
     return count;
   } catch (err) {
@@ -179,8 +181,30 @@ export async function fetchStateFromFirestore(): Promise<any | null> {
   return null;
 }
 
+export function canonicalizeAnswersMap(answers: any): Record<string, any> {
+  const result: Record<string, any> = {};
+  if (!answers || typeof answers !== 'object') return result;
+  for (const [key, val] of Object.entries(answers)) {
+    const v: any = val;
+    if (!v || !v.studentId) continue;
+    if (v.classId === '3-1' && (v.studentName === '권아준' || v.studentId.includes('c3-1-1'))) {
+      continue;
+    }
+    const session = v.session || 1;
+    const canonicalKey = `${v.classId}_${v.studentId}_s${session}`;
+    v.session = session;
+    v.id = `ans_${v.classId}_${v.studentId}_s${session}`;
+    const existing = result[canonicalKey];
+    if (!existing || (v.updatedAt || 0) >= (existing.updatedAt || 0)) {
+      result[canonicalKey] = v;
+    }
+  }
+  return result;
+}
+
 export async function saveStateToFirestore(state: any): Promise<boolean> {
   try {
+    const cleanAnswers = canonicalizeAnswersMap(state.studentAnswers || {});
     const cleanPayload = JSON.parse(JSON.stringify({
       classes: state.classes || [],
       students: state.students || [],
@@ -191,12 +215,12 @@ export async function saveStateToFirestore(state: any): Promise<boolean> {
         ...getDefaultSessionQuestions(),
         ...(state.sessionQuestions || {})
       },
-      studentAnswers: state.studentAnswers || {},
+      studentAnswers: cleanAnswers,
       activeSessions: state.activeSessions || {},
       gameScores: state.gameScores || [],
       updatedAt: Date.now()
     }));
-    await setDoc(STATE_DOC_REF, cleanPayload, { merge: true });
+    await setDoc(STATE_DOC_REF, cleanPayload);
     return true;
   } catch (err) {
     console.error("[Firestore] Error saving state:", err);

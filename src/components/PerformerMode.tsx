@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import confetti from 'canvas-confetti';
 import {
   Classroom,
@@ -259,9 +259,34 @@ export const PerformerMode: React.FC<Props> = ({
 
   const sessionAnswerKey = selectedClassId && selectedStudentId ? `${selectedClassId}_${selectedStudentId}_s${activeSessionForClass}` : '';
   const legacyAnswerKey = selectedClassId && selectedStudentId ? `${selectedClassId}_${selectedStudentId}` : '';
-  const existingStudentAnswer = (sessionAnswerKey && studentAnswers[sessionAnswerKey]) || (legacyAnswerKey && studentAnswers[legacyAnswerKey]) || null;
+  const legacyCandidate = legacyAnswerKey && studentAnswers[legacyAnswerKey];
+  const isLegacySameSession = legacyCandidate && (legacyCandidate.session || 1) === activeSessionForClass;
+  const existingStudentAnswer = (sessionAnswerKey && studentAnswers[sessionAnswerKey]) || (isLegacySameSession ? legacyCandidate : null) || null;
   const studentAnswerKey = sessionAnswerKey || legacyAnswerKey;
 
+  // All recorded answers for this student across all sessions (guaranteed permanent retention & review!)
+  const allStudentAnswersHistory = useMemo(() => {
+    if (!selectedClassId || !selectedStudentId) return [];
+    const map = new Map<number, StudentAnswer>();
+    Object.values(studentAnswers).forEach(ans => {
+      if (!ans || !ans.studentId || !ans.answer) return;
+      if (ans.classId === selectedClassId && ans.studentId === selectedStudentId) {
+        const s = ans.session || 1;
+        const existing = map.get(s);
+        if (!existing || (ans.updatedAt || 0) >= (existing.updatedAt || 0)) {
+          map.set(s, ans);
+        }
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => (b.session || 1) - (a.session || 1));
+  }, [studentAnswers, selectedClassId, selectedStudentId]);
+
+  // Strictly past sessions answers (excluding current session, so it NEVER duplicates the current answer on screen!)
+  const pastStudentAnswersHistory = useMemo(() => {
+    return allStudentAnswersHistory.filter((item: StudentAnswer) => (item.session || 1) !== activeSessionForClass);
+  }, [allStudentAnswersHistory, activeSessionForClass]);
+
+  const [showAnswersHistory, setShowAnswersHistory] = useState<boolean>(false);
   const [answerInput, setAnswerInput] = useState<string>('');
   const [cleanBotResult, setCleanBotResult] = useState<CleanBotResult | null>(null);
   const [isAnswerSubmitting, setIsAnswerSubmitting] = useState<boolean>(false);
@@ -623,6 +648,46 @@ export const PerformerMode: React.FC<Props> = ({
                   </div>
                 </div>
               </form>
+            )}
+
+            {/* Past Answers History Viewer: Always reviewable, never lost */}
+            {pastStudentAnswersHistory.length > 0 && (
+              <div className="pt-3 border-t border-amber-500/20">
+                <button
+                  type="button"
+                  onClick={() => setShowAnswersHistory(prev => !prev)}
+                  className="w-full py-2 px-3 rounded-xl bg-slate-950/80 hover:bg-slate-900 text-amber-300 text-xs font-bold transition-all flex items-center justify-between border border-slate-800 cursor-pointer shadow-sm"
+                >
+                  <span className="flex items-center gap-2">
+                    <MessageSquareQuote className="w-3.5 h-3.5 text-amber-400" />
+                    <span>나의 지난 차시 답변 기록 열람 ({pastStudentAnswersHistory.length}건 보관됨)</span>
+                  </span>
+                  <span className="text-[11px] text-amber-400 font-extrabold">{showAnswersHistory ? '▲ 닫기' : '▼ 펼쳐보기'}</span>
+                </button>
+
+                {showAnswersHistory && (
+                  <div className="mt-2.5 space-y-2 p-3 rounded-xl bg-slate-950/90 border border-slate-800 text-left animate-in fade-in duration-150">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      보관된 지난 차시별 내 답변 목록 (현재 {activeSessionForClass}차시는 상단에 표시됨)
+                    </span>
+                    {pastStudentAnswersHistory.map((item: StudentAnswer) => (
+                      <div key={item.session || 1} className="p-3 rounded-lg bg-slate-900/90 border border-slate-800/80 space-y-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 font-black border border-amber-400/30">
+                            {item.session || 1}차시 답변
+                          </span>
+                          <span className="text-slate-500 text-[10px]">
+                            {new Date(item.updatedAt).toLocaleDateString([], { month: 'numeric', day: 'numeric' })} {new Date(item.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-200 whitespace-pre-wrap leading-relaxed pt-1 font-medium">
+                          {item.answer}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}

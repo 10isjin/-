@@ -32,6 +32,8 @@ import {
   Lock,
   LogOut,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Edit3,
   Check,
   X,
@@ -84,6 +86,7 @@ interface Props {
   onBatchSaveSessionQuestions?: (questions: Record<number, string>) => Promise<boolean>;
   onSaveClassSessionQuestion?: (classId: string, session: number, question: string) => Promise<boolean>;
   onBatchSaveClassSessionQuestions?: (classId: string, questions: Record<number, string>) => Promise<boolean>;
+  onDeleteStudentAnswer?: (classId: string, studentId: string, session?: number) => Promise<boolean>;
   onSubmitTeacherFeedback: (payload: {
     classId: string;
     performerId: string;
@@ -148,6 +151,7 @@ export const TeacherMode: React.FC<Props> = ({
   onBatchSaveSessionQuestions,
   onSaveClassSessionQuestion,
   onBatchSaveClassSessionQuestions,
+  onDeleteStudentAnswer,
   onSubmitTeacherFeedback,
   onSetActiveSession,
   onBatchSetActiveSession,
@@ -169,14 +173,54 @@ export const TeacherMode: React.FC<Props> = ({
   const [isSavingQuestion, setIsSavingQuestion] = useState<boolean>(false);
   const [savedSessionNum, setSavedSessionNum] = useState<number | 'all' | null>(null);
   const [sessionSuccessToast, setSessionSuccessToast] = useState<string>('');
-  const [answersFilterSession, setAnswersFilterSession] = useState<number | 'all'>('all');
+  const [selectedSessionTab, setSelectedSessionTab] = useState<number | 'all'>(1);
+  const [showAllQuestionsAccordion, setShowAllQuestionsAccordion] = useState<boolean>(false);
+  const [answersSearchQuery, setAnswersSearchQuery] = useState<string>('');
+  const [copyAnswersToast, setCopyAnswersToast] = useState<string>('');
 
-  // Keep questionClassId valid
+  // Strictly deduplicated student answers for the selected class (NO duplicates!)
+  const uniqueClassAnswers = useMemo(() => {
+    const map = new Map<string, StudentAnswer>();
+    Object.values(studentAnswers).forEach(ans => {
+      if (!ans || !ans.studentId || !ans.answer) return;
+      if (ans.classId !== questionClassId) return;
+      const sess = ans.session || 1;
+      // Key uniquely by studentId and session
+      const key = `${ans.studentId}_${sess}`;
+      const existing = map.get(key);
+      if (!existing || (ans.updatedAt || 0) >= (existing.updatedAt || 0)) {
+        map.set(key, ans);
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.studentNumber !== b.studentNumber) return a.studentNumber - b.studentNumber;
+      return (b.session || 1) - (a.session || 1);
+    });
+  }, [studentAnswers, questionClassId]);
+
+  // Count of answers per session for the selected class
+  const sessionAnswerCounts = useMemo(() => {
+    const counts: Record<number, number> = {};
+    uniqueClassAnswers.forEach(ans => {
+      const s = ans.session || 1;
+      counts[s] = (counts[s] || 0) + 1;
+    });
+    return counts;
+  }, [uniqueClassAnswers]);
+
+  // Keep questionClassId valid and sync selected session
   useEffect(() => {
     if (classes.length > 0 && !classes.some(c => c.id === questionClassId)) {
       setQuestionClassId(classes[0].id);
     }
   }, [classes, questionClassId]);
+
+  useEffect(() => {
+    if (questionClassId) {
+      const activeSess = activeSessions[questionClassId] || 1;
+      setSelectedSessionTab(activeSess);
+    }
+  }, [questionClassId]);
 
   // Load questions for the selected class without forcing default filler questions
   useEffect(() => {
@@ -833,6 +877,17 @@ export const TeacherMode: React.FC<Props> = ({
     setTimeout(() => setSessionSuccessToast(''), 2000);
   };
 
+  // Delete student answer
+  const handleDeleteAnswerAction = async (classId: string, studentId: string, studentName: string, session?: number) => {
+    if (!onDeleteStudentAnswer) return;
+    if (!confirm(`'${studentName}' 학생의 ${session || 1}차시 답변을 삭제하시겠습니까?`)) return;
+    const ok = await onDeleteStudentAnswer(classId, studentId, session);
+    if (ok) {
+      setSessionSuccessToast(`${studentName} 학생 답변 삭제 완료`);
+      setTimeout(() => setSessionSuccessToast(''), 2000);
+    }
+  };
+
   // 1. PIN Auth Screen
   if (!isAuthenticated) {
     return (
@@ -1447,262 +1502,540 @@ export const TeacherMode: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* STEP 2: 현재 선택된 학급의 수업 차시 설정 카드 */}
+          {/* SUB-VIEW: INTERACTIVE SESSION-BASED QUESTION & STUDENT ANSWERS WORKSPACE (NO SCROLLING!) */}
           {(() => {
             const currentClass = classes.find(c => c.id === questionClassId);
             const currentActiveSess = questionClassId ? (activeSessions[questionClassId] || 1) : 1;
-            const currentActiveQ = (classQuestionsInput[currentActiveSess] || '').trim();
+            const classStudents = students.filter(s => s.classId === questionClassId);
+
+            // Filter answers according to selected session tab or search query
+            const filteredAnswers = uniqueClassAnswers.filter(a => {
+              if (selectedSessionTab !== 'all' && (a.session || 1) !== selectedSessionTab) return false;
+              if (answersSearchQuery.trim()) {
+                const q = answersSearchQuery.trim().toLowerCase();
+                const matchesNum = String(a.studentNumber) === q;
+                const matchesName = (a.studentName || '').toLowerCase().includes(q);
+                const matchesText = (a.answer || '').toLowerCase().includes(q);
+                if (!matchesNum && !matchesName && !matchesText) return false;
+              }
+              return true;
+            });
+
+            // Handle copying student answers for this view
+            const handleCopyAllAnswers = () => {
+              if (filteredAnswers.length === 0) return;
+              const textLines = [
+                `[${currentClass?.name || '학급'} 학생 질문 답변 목록]`,
+                `기준 차시: ${selectedSessionTab === 'all' ? '전체 차시' : `${selectedSessionTab}차시`}`,
+                `제출 인원: 총 ${filteredAnswers.length}명`,
+                '----------------------------------------',
+                ...filteredAnswers.map(a => `${a.studentNumber}번 ${a.studentName} (${a.session || 1}차시): ${a.answer}`),
+                '----------------------------------------'
+              ].join('\n');
+              navigator.clipboard.writeText(textLines).then(() => {
+                setCopyAnswersToast('클립보드에 전체 답변이 복사되었습니다.');
+                setTimeout(() => setCopyAnswersToast(''), 3000);
+              });
+            };
+
+            const isSpecificSession = selectedSessionTab !== 'all';
+            const sessNum = isSpecificSession ? (selectedSessionTab as number) : currentActiveSess;
+            const isThisSessionActive = sessNum === currentActiveSess;
+            const thisSessQuestion = classQuestionsInput[sessNum] || '';
+            const thisSessAnswerCount = sessionAnswerCounts[sessNum] || 0;
 
             return (
-              <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-lg space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="px-3 py-1 rounded-xl bg-amber-400 text-slate-950 font-black text-sm">
-                      {currentClass?.name || '선택 학급'}
+              <div className="space-y-5">
+                {/* Copy toast */}
+                {copyAnswersToast && (
+                  <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 text-xs font-bold flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>{copyAnswersToast}</span>
+                  </div>
+                )}
+
+                {/* 2단계: 차시 바로가기 탭 바 (1차시 ~ 17차시 + 전체 보기) */}
+                <div className="p-4 sm:p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <span className="text-xs font-extrabold text-white flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-amber-400" />
+                      <span>2단계 &bull; 확인/수정할 수업 차시를 선택하세요:</span>
                     </span>
-                    <span className="text-xs font-bold text-slate-300">
-                      현재 수업 차시 설정:
+                    <span className="text-[11px] text-slate-400 font-medium">
+                      차시를 클릭하면 해당 차시의 <strong className="text-amber-300">질문</strong>과 <strong className="text-emerald-400">학생 답변</strong>이 스크롤 없이 바로 아래에 표시됩니다.
                     </span>
-                    <select
-                      value={currentActiveSess}
-                      onChange={(e) => handleClassSessionSelectAction(questionClassId, Number(e.target.value))}
-                      className="px-3 py-1.5 rounded-xl bg-slate-950 border border-amber-400/60 text-amber-300 font-extrabold text-xs focus:outline-none focus:border-amber-400 cursor-pointer shadow-sm"
-                    >
-                      {SESSIONS_1_TO_17.map(n => (
-                        <option key={n} value={n}>{n}차시</option>
-                      ))}
-                    </select>
                   </div>
 
-                  <div className="text-xs">
-                    {currentActiveQ ? (
-                      <span className="text-emerald-400 font-bold flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                        현재 [{currentActiveSess}차시] 질문이 학생 수행자 모드에 실시간 연동 중입니다.
-                      </span>
-                    ) : (
-                      <span className="text-amber-400/90 font-medium flex items-center gap-1.5">
-                        <AlertCircle className="w-4 h-4 text-amber-400" />
-                        현재 [{currentActiveSess}차시]에 등록된 질문이 없습니다. (아래 {currentActiveSess}차시 항목에 질문을 입력해보세요)
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 scrollbar-thin">
+                    {SESSIONS_1_TO_17.map(n => {
+                      const isSelected = selectedSessionTab === n;
+                      const isActiveSession = n === currentActiveSess;
+                      const hasQuestion = Boolean(classQuestionsInput[n]?.trim());
+                      const ansCount = sessionAnswerCounts[n] || 0;
 
-          {/* STEP 3: 1차시부터 17차시까지 쭉 나오는 질문 등록 목록 */}
-          {(() => {
-            const currentClass = classes.find(c => c.id === questionClassId);
-            const currentActiveSess = questionClassId ? (activeSessions[questionClassId] || 1) : 1;
-
-            return (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between px-1">
-                  <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-amber-400" />
-                    {currentClass?.name || '선택 학급'} 1~17차시 질문 목록
-                  </h4>
-                  <span className="text-[11px] text-slate-400">
-                    차시별 질문 입력 후 우측 [저장] 버튼을 누르거나, 상단 [전체 저장] 버튼을 누르면 영구 보존됩니다.
-                  </span>
-                </div>
-
-                <div className="space-y-2.5">
-                  {SESSIONS_1_TO_17.map(n => {
-                    const isActiveSession = n === currentActiveSess;
-                    const qText = classQuestionsInput[n] || '';
-                    const isSavingThis = isSavingQuestion && savedSessionNum === n;
-
-                    return (
-                      <div
-                        key={n}
-                        className={`p-4 rounded-2xl transition-all border shadow-md flex flex-col md:flex-row md:items-center gap-3 ${
-                          isActiveSession
-                            ? 'bg-amber-950/20 border-amber-400/60 ring-1 ring-amber-400/30'
-                            : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'
-                        }`}
-                      >
-                        {/* Session Badge and Status */}
-                        <div className="md:w-44 shrink-0 flex md:flex-col items-center md:items-start justify-between gap-1.5">
-                          <div className="flex items-center gap-2">
-                            <span className={`px-2.5 py-1 rounded-lg text-xs font-black ${
-                              isActiveSession
-                                ? 'bg-amber-400 text-slate-950 shadow-sm'
-                                : 'bg-slate-800 text-slate-300'
-                            }`}>
-                              {n}차시
-                            </span>
-                            {isActiveSession && (
-                              <span className="text-[11px] font-black text-amber-300 md:hidden">
-                                ★ 현재 수업 차시
-                              </span>
-                            )}
-                          </div>
+                      return (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => setSelectedSessionTab(n)}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold shrink-0 transition-all flex items-center gap-1.5 cursor-pointer border ${
+                            isSelected
+                              ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-md shadow-amber-400/20 font-black scale-[1.02]'
+                              : isActiveSession
+                              ? 'bg-amber-950/40 text-amber-300 border-amber-500/40 hover:border-amber-400'
+                              : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'
+                          }`}
+                        >
+                          <span>{n}차시</span>
                           {isActiveSession && (
-                            <span className="hidden md:inline-flex items-center gap-1 text-[11px] font-black text-amber-300 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                              현재 학생 화면 연동 중
+                            <span className={`text-[10px] px-1 rounded font-extrabold ${isSelected ? 'bg-slate-950 text-amber-300' : 'bg-amber-400 text-slate-950'}`}>
+                              ★ 진행중
                             </span>
+                          )}
+                          {hasQuestion && !isActiveSession && (
+                            <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-slate-950' : 'bg-emerald-400'}`} title="질문 등록됨" />
+                          )}
+                          {ansCount > 0 && (
+                            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                              isSelected ? 'bg-slate-950 text-emerald-400' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            }`}>
+                              {ansCount}명
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+
+                    {/* All sessions tab */}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSessionTab('all')}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold shrink-0 transition-all flex items-center gap-1.5 cursor-pointer border ${
+                        selectedSessionTab === 'all'
+                          ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-md shadow-amber-400/20 font-black'
+                          : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>전체 차시 모아보기</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                        selectedSessionTab === 'all' ? 'bg-slate-950 text-amber-300' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {uniqueClassAnswers.length}건
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 3단계: 선택된 차시의 질문 & 학생 답변 통합 카드 (스크롤 제로!) */}
+                {isSpecificSession ? (
+                  <div className="space-y-4">
+                    {/* [CARD 1] 해당 차시 질문 카드 */}
+                    <div className={`p-5 rounded-2xl border shadow-lg transition-all ${
+                      isThisSessionActive
+                        ? 'bg-gradient-to-br from-amber-950/30 via-slate-900 to-slate-950 border-amber-400/50 ring-1 ring-amber-400/30'
+                        : 'bg-slate-900/90 border-slate-800'
+                    }`}>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-3 py-1 rounded-xl bg-amber-400 text-slate-950 font-black text-xs">
+                            {currentClass?.name || '학급'} {sessNum}차시 질문
+                          </span>
+                          {isThisSessionActive ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-black text-amber-300 bg-amber-400/10 px-2.5 py-1 rounded-xl border border-amber-400/30">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                              ★ 현재 수업 차시 (학생 수행자 화면에 실시간 연동 중)
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleClassSessionSelectAction(questionClassId, sessNum)}
+                              className="inline-flex items-center gap-1.5 text-xs text-slate-300 hover:text-amber-300 font-bold px-3 py-1 rounded-xl bg-slate-950 border border-slate-700 hover:border-amber-400 transition-all cursor-pointer shadow-sm"
+                            >
+                              <span>★ 이 차시({sessNum}차시)를 현재 수업 차시로 변경하기</span>
+                            </button>
                           )}
                         </div>
 
-                        {/* Question Textarea */}
-                        <div className="flex-1">
-                          <textarea
-                            rows={2}
-                            value={qText}
-                            onChange={(e) => {
-                              isQuestionDirtyRef.current = true;
-                              const val = e.target.value;
-                              setClassQuestionsInput(prev => ({
-                                ...prev,
-                                [n]: val
-                              }));
-                            }}
-                            placeholder={`${n}차시 질문을 입력하세요... (미입력 시 질문이 표시되지 않습니다)`}
-                            className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder:text-slate-600 focus:outline-none focus:border-amber-400 text-xs leading-relaxed"
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-400 font-semibold">
+                            답변 제출: <strong className="text-emerald-400 font-bold">{thisSessAnswerCount}명</strong> / 총 {classStudents.length}명
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Question Textarea */}
+                      <div className="space-y-2">
+                        <textarea
+                          rows={2}
+                          value={classQuestionsInput[sessNum] || ''}
+                          onChange={(e) => {
+                            isQuestionDirtyRef.current = true;
+                            const val = e.target.value;
+                            setClassQuestionsInput(prev => ({
+                              ...prev,
+                              [sessNum]: val
+                            }));
+                          }}
+                          placeholder={`${sessNum}차시 질문을 입력하세요... (예: 오늘 배운 슛 자세에서 가장 중요한 핵심 포인트는 무엇인가요?)`}
+                          className="w-full p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder:text-slate-600 focus:outline-none focus:border-amber-400 text-sm leading-relaxed"
+                        />
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[11px] text-slate-400 font-medium">
+                            {classQuestionsInput[sessNum]?.trim()
+                              ? '질문 입력 후 [저장]을 누르면 즉시 클라우드에 영구 보존됩니다.'
+                              : '질문이 비어있으면 학생 화면에 질문 카드가 나타나지 않습니다.'}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {classQuestionsInput[sessNum]?.trim() && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  isQuestionDirtyRef.current = true;
+                                  setClassQuestionsInput(prev => ({ ...prev, [sessNum]: '' }));
+                                }}
+                                className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-800 text-xs transition-colors cursor-pointer"
+                              >
+                                지우기
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              disabled={isSavingQuestion}
+                              onClick={() => handleSaveSingleSessionAction(sessNum)}
+                              className={`px-4 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
+                                isSavingQuestion && savedSessionNum === sessNum
+                                  ? 'bg-emerald-500 text-white'
+                                  : 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-sm'
+                              }`}
+                            >
+                              <Save className="w-3.5 h-3.5" />
+                              {isSavingQuestion && savedSessionNum === sessNum ? '저장됨!' : '질문 저장'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* [CARD 2] 해당 차시 학생 제출 답변 (질문 바로 아래에 연결되어 스크롤 필요 없음!) */}
+                    <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md space-y-4">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <MessageSquareQuote className="w-5 h-5 text-emerald-400" />
+                          <h4 className="text-sm font-extrabold text-white">
+                            {currentClass?.name} {sessNum}차시 학생 제출 답변
+                          </h4>
+                          <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-black">
+                            {filteredAnswers.length}명
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {/* Search Box */}
+                          <div className="relative min-w-[200px]">
+                            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                            <input
+                              type="text"
+                              value={answersSearchQuery}
+                              onChange={(e) => setAnswersSearchQuery(e.target.value)}
+                              placeholder="번호, 이름, 답변 검색..."
+                              className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
+                            />
+                          </div>
+
+                          {filteredAnswers.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={handleCopyAllAnswers}
+                              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                            >
+                              <span>답변 복사</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Answer Cards Grid */}
+                      {filteredAnswers.length === 0 ? (
+                        <div className="p-8 text-center rounded-2xl bg-slate-950/60 border border-dashed border-slate-800 text-slate-500 text-xs space-y-2">
+                          <MessageSquareQuote className="w-8 h-8 mx-auto text-slate-600" />
+                          <p className="font-bold text-slate-300 text-sm">
+                            {answersSearchQuery
+                              ? `'${answersSearchQuery}' 검색 조건과 일치하는 답변이 없습니다.`
+                              : `${currentClass?.name} ${sessNum}차시에 제출된 학생 답변이 아직 없습니다.`}
+                          </p>
+                          <p className="text-slate-500 max-w-md mx-auto">
+                            학생들이 수행자 모드에서 본인 이름을 선택하고 답변을 작성하면 이곳에 실시간으로 즉시 표시됩니다. (중복 없이 1명당 1개씩 깔끔하게 정리됩니다)
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {filteredAnswers.map((ans) => (
+                            <div
+                              key={`${ans.studentId}_${ans.session || 1}`}
+                              className="p-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 transition-all flex flex-col justify-between space-y-2 shadow-sm"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center justify-center font-black text-xs">
+                                    {ans.studentNumber}번
+                                  </span>
+                                  <span className="font-black text-white text-sm">
+                                    {ans.studentName}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[11px] text-slate-500">
+                                    {new Date(ans.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                  {onDeleteStudentAnswer && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteAnswerAction(ans.classId, ans.studentId, ans.studentName, ans.session || 1)}
+                                      className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                                      title="이 학생 답변 삭제하기"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              <p className="text-xs sm:text-sm text-slate-200 leading-relaxed bg-slate-900/80 p-3 rounded-lg border border-slate-800 whitespace-pre-wrap font-medium">
+                                {ans.answer || '(내용 없음)'}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* [ALL SESSIONS VIEW] 전체 차시 모아보기 */
+                  <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <MessageSquareQuote className="w-5 h-5 text-amber-400" />
+                        <h4 className="text-sm font-extrabold text-white">
+                          {currentClass?.name} 전체 차시 학생 제출 답변 모아보기
+                        </h4>
+                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30 font-black">
+                          총 {filteredAnswers.length}건
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Search Box */}
+                        <div className="relative min-w-[200px]">
+                          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            value={answersSearchQuery}
+                            onChange={(e) => setAnswersSearchQuery(e.target.value)}
+                            placeholder="번호, 이름, 답변 검색..."
+                            className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
                           />
                         </div>
 
-                        {/* Action buttons */}
-                        <div className="flex items-center gap-1.5 shrink-0 self-end md:self-center">
-                          {qText.trim() && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                isQuestionDirtyRef.current = true;
-                                setClassQuestionsInput(prev => ({ ...prev, [n]: '' }));
-                              }}
-                              className="px-2.5 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-500 hover:text-rose-400 border border-slate-800 text-xs transition-colors cursor-pointer"
-                              title="질문 내용 지우기"
-                            >
-                              지우기
-                            </button>
-                          )}
+                        {filteredAnswers.length > 0 && (
                           <button
                             type="button"
-                            disabled={isSavingQuestion}
-                            onClick={() => handleSaveSingleSessionAction(n)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
-                              isSavingThis
-                                ? 'bg-emerald-500 text-white'
-                                : 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-sm'
-                            }`}
+                            onClick={handleCopyAllAnswers}
+                            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
                           >
-                            <Save className="w-3.5 h-3.5" />
-                            {isSavingThis ? '저장됨!' : '저장'}
+                            <span>전체 답변 복사</span>
                           </button>
-                        </div>
+                        )}
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
 
-                {/* Bottom Batch Save Button */}
-                <div className="flex justify-end pt-2">
+                    {/* All Answer Cards Grid */}
+                    {filteredAnswers.length === 0 ? (
+                      <div className="p-10 text-center rounded-2xl bg-slate-950/60 border border-dashed border-slate-800 text-slate-500 text-xs">
+                        제출된 답변이 없습니다.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {filteredAnswers.map((ans) => (
+                          <div
+                            key={`${ans.studentId}_${ans.session || 1}`}
+                            className="p-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 transition-all flex flex-col justify-between space-y-2 shadow-sm"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center justify-center font-black text-xs">
+                                  {ans.studentNumber}번
+                                </span>
+                                <span className="font-black text-white text-sm">
+                                  {ans.studentName}
+                                </span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 font-extrabold border border-amber-400/30">
+                                  {ans.session || 1}차시 답변
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] text-slate-500">
+                                  {new Date(ans.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                                {onDeleteStudentAnswer && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteAnswerAction(ans.classId, ans.studentId, ans.studentName, ans.session || 1)}
+                                    className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                                    title="이 학생 답변 삭제하기"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <p className="text-xs sm:text-sm text-slate-200 leading-relaxed bg-slate-900/80 p-3 rounded-lg border border-slate-800 whitespace-pre-wrap font-medium">
+                              {ans.answer || '(내용 없음)'}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* [아코디언] 1~17차시 질문 목록 전체 펼쳐보기 & 일괄 관리 (접이식이므로 학생 답변을 밀어내지 않음!) */}
+                <div className="pt-2">
                   <button
                     type="button"
-                    disabled={isSavingQuestion}
-                    onClick={handleBatchSaveAllSessionsAction}
-                    className="px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs transition-all flex items-center gap-2 shadow-lg shadow-amber-400/20 cursor-pointer disabled:opacity-50"
+                    onClick={() => setShowAllQuestionsAccordion(prev => !prev)}
+                    className="w-full p-4 rounded-2xl bg-slate-900/90 hover:bg-slate-900 border border-slate-800 hover:border-amber-400/50 transition-all flex items-center justify-between text-left cursor-pointer shadow-md group"
                   >
-                    <Save className="w-4 h-4" />
-                    {isSavingQuestion && savedSessionNum === 'all'
-                      ? '일괄 저장 중...'
-                      : `${currentClass?.name || '이 학급'} 1~17차시 질문 전체 일괄 저장`}
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-amber-400/10 border border-amber-400/30 text-amber-300 flex items-center justify-center font-bold">
+                        <FileSpreadsheet className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs sm:text-sm font-extrabold text-white group-hover:text-amber-300 transition-colors">
+                          {currentClass?.name || '선택 학급'} 1~17차시 질문 목록 전체 한눈에 보기 & 일괄 편집
+                        </h4>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          학기 전체 질문을 한 화면에서 미리 계획하고 일괄 저장할 때 펼쳐보세요.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs text-amber-300 font-bold px-3 py-1.5 rounded-xl bg-amber-400/10 border border-amber-400/20">
+                      <span>{showAllQuestionsAccordion ? '목록 접기' : '전체 질문 펼치기'}</span>
+                      {showAllQuestionsAccordion ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </div>
                   </button>
+
+                  {showAllQuestionsAccordion && (
+                    <div className="mt-3 p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl space-y-4 animate-in fade-in duration-200">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                        <span className="text-xs text-slate-300 font-semibold">
+                          각 차시별 질문을 입력한 뒤 아래 [전체 일괄 저장] 버튼을 누르면 모든 질문이 보존됩니다.
+                        </span>
+                        <button
+                          type="button"
+                          disabled={isSavingQuestion}
+                          onClick={handleBatchSaveAllSessionsAction}
+                          className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs transition-all flex items-center gap-2 shadow-md cursor-pointer disabled:opacity-50 shrink-0 self-start sm:self-center"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          {isSavingQuestion && savedSessionNum === 'all'
+                            ? '일괄 저장 중...'
+                            : `${currentClass?.name || '이 학급'} 1~17차시 전체 일괄 저장`}
+                        </button>
+                      </div>
+
+                      <div className="space-y-2.5">
+                        {SESSIONS_1_TO_17.map(n => {
+                          const isActiveSession = n === currentActiveSess;
+                          const qText = classQuestionsInput[n] || '';
+                          const isSavingThis = isSavingQuestion && savedSessionNum === n;
+
+                          return (
+                            <div
+                              key={n}
+                              className={`p-3.5 rounded-xl transition-all border flex flex-col md:flex-row md:items-center gap-3 ${
+                                isActiveSession
+                                  ? 'bg-amber-950/20 border-amber-400/60 ring-1 ring-amber-400/30'
+                                  : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                              }`}
+                            >
+                              <div className="md:w-36 shrink-0 flex md:flex-col items-center md:items-start justify-between gap-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`px-2 py-0.5 rounded-lg text-xs font-black ${
+                                    isActiveSession ? 'bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-300'
+                                  }`}>
+                                    {n}차시
+                                  </span>
+                                  {isActiveSession && (
+                                    <span className="text-[10px] font-black text-amber-300">
+                                      ★ 진행중
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-slate-500">
+                                  답변: {sessionAnswerCounts[n] || 0}건
+                                </span>
+                              </div>
+
+                              <div className="flex-1">
+                                <textarea
+                                  rows={1}
+                                  value={qText}
+                                  onChange={(e) => {
+                                    isQuestionDirtyRef.current = true;
+                                    const val = e.target.value;
+                                    setClassQuestionsInput(prev => ({ ...prev, [n]: val }));
+                                  }}
+                                  placeholder={`${n}차시 질문을 입력하세요...`}
+                                  className="w-full p-2 rounded-lg bg-slate-900 border border-slate-800 text-white placeholder:text-slate-600 focus:outline-none focus:border-amber-400 text-xs leading-relaxed"
+                                />
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0 self-end md:self-center">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedSessionTab(n)}
+                                  className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-bold border border-slate-800 transition-colors cursor-pointer"
+                                  title="이 차시 학생 답변 보기"
+                                >
+                                  답변 확인
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isSavingQuestion}
+                                  onClick={() => handleSaveSingleSessionAction(n)}
+                                  className={`px-3 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 ${
+                                    isSavingThis ? 'bg-emerald-500 text-white' : 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                                  }`}
+                                >
+                                  <Save className="w-3 h-3" />
+                                  {isSavingThis ? '완료' : '저장'}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="flex justify-end pt-2">
+                        <button
+                          type="button"
+                          disabled={isSavingQuestion}
+                          onClick={handleBatchSaveAllSessionsAction}
+                          className="px-5 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs transition-all flex items-center gap-2 shadow-md cursor-pointer disabled:opacity-50"
+                        >
+                          <Save className="w-4 h-4" />
+                          {isSavingQuestion && savedSessionNum === 'all'
+                            ? '일괄 저장 중...'
+                            : `${currentClass?.name || '이 학급'} 1~17차시 질문 전체 일괄 저장`}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );
           })()}
 
-          {/* STEP 4: 학생 제출 답변 현황 확인 */}
-          <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4 shadow-xl">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h4 className="text-base font-extrabold text-white flex items-center gap-2">
-                  <CheckCheck className="w-5 h-5 text-emerald-400" />
-                  {classes.find(c => c.id === questionClassId)?.name || '선택 학급'} 학생 답변 제출 내역
-                </h4>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  수행자 모드에서 학생들이 질문을 읽고 제출한 답변 목록입니다.
-                </p>
-              </div>
-
-              {/* Filter */}
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-bold text-slate-400">차시 필터:</span>
-                <select
-                  value={answersFilterSession}
-                  onChange={(e) => setAnswersFilterSession(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-                  className="p-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-bold text-amber-300 focus:outline-none focus:border-amber-400 cursor-pointer"
-                >
-                  <option value="all">1~17 전체 차시 답변</option>
-                  {SESSIONS_1_TO_17.map(n => (
-                    <option key={n} value={n}>{n}차시 답변만</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Answer List */}
-            {(() => {
-              const filteredAnswers = Object.values(studentAnswers)
-                .filter(a => {
-                  if (a.classId !== questionClassId) return false;
-                  if (answersFilterSession !== 'all' && (a.session || 1) !== answersFilterSession) return false;
-                  return true;
-                })
-                .sort((a, b) => a.studentNumber - b.studentNumber);
-
-              if (filteredAnswers.length === 0) {
-                return (
-                  <div className="p-10 text-center rounded-xl bg-slate-950/50 border border-dashed border-slate-800 text-slate-500 text-xs">
-                    <MessageSquareQuote className="w-8 h-8 mx-auto mb-2 opacity-30 text-slate-400" />
-                    <p className="font-semibold text-slate-400 mb-0.5">제출된 학생 답변이 없습니다.</p>
-                    <p className="text-slate-600">학생들이 수행자 모드에서 질문에 답변을 작성하여 제출하면 이곳에 실시간으로 표시됩니다.</p>
-                  </div>
-                );
-              }
-
-              return (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {filteredAnswers.map((ans) => (
-                    <div
-                      key={ans.id}
-                      className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 hover:border-slate-700 transition-all flex flex-col justify-between space-y-2"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center justify-center font-bold text-xs">
-                              {ans.studentNumber}번
-                            </span>
-                            <span className="font-bold text-white text-sm">
-                              {ans.studentName}
-                            </span>
-                            {ans.session && (
-                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 font-extrabold">
-                                {ans.session}차시
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-[11px] text-slate-500">
-                            {new Date(ans.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-200 leading-relaxed bg-slate-900/90 p-3 rounded-lg border border-slate-800/80 whitespace-pre-wrap">
-                          {ans.answer || '(답변 내용 없음)'}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
-          </div>
         </div>
       )}
 
