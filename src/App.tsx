@@ -284,7 +284,7 @@ export default function App() {
       const initial = getDefaultAppState();
       return {
         ...initial,
-        feedbacks: vaultFeedbacks,
+        feedbacks: mergeFeedbackArrays(initial.feedbacks || [], vaultFeedbacks),
         teacherQuestions: teacherQ,
         sessionQuestions: sessionQ,
         classSessionQuestions: classSessionQ,
@@ -408,12 +408,52 @@ export default function App() {
             } catch (e) {}
             return mergedData;
           });
+          loadedFromServer = true;
         } else {
           // If Firestore is empty or quota exceeded, DO NOT WIPE STATE! Keep all existing feedbacks and students intact!
           console.warn('[ShootingStar] Firestore fetch returned empty or failed. Preserving existing client state.');
         }
       } catch (fsErr) {
         console.warn('[ShootingStar] Firestore fetch error:', fsErr);
+      }
+    }
+
+    // 3. Fallback: If neither Express server nor Firestore succeeded (e.g. Netlify static hosting during Firestore quota downtime)
+    // Fetch the bundled static /app-state.json file so newly opened PCs or devices never see 0 records!
+    if (!loadedFromServer) {
+      try {
+        const staticRes = await fetch('/app-state.json');
+        if (staticRes.ok) {
+          const contentType = staticRes.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const staticData = await staticRes.json();
+            if (staticData && Array.isArray(staticData.classes) && staticData.classes.length > 0) {
+              setAppState(prev => {
+                const vaultFeedbacks = loadFeedbacksFromVault();
+                const mergedFeedbacks = mergeFeedbackArrays(prev.feedbacks, staticData.feedbacks || [], vaultFeedbacks);
+                saveFeedbacksToVault(mergedFeedbacks);
+                const loadedData = {
+                  classes: staticData.classes,
+                  students: Array.isArray(staticData.students) ? staticData.students : [],
+                  feedbacks: mergedFeedbacks,
+                  aiEvaluations: staticData.aiEvaluations || {},
+                  teacherQuestions: { ...(staticData.teacherQuestions || {}), ...(prev.teacherQuestions || {}) },
+                  sessionQuestions: { ...(staticData.sessionQuestions || {}), ...(prev.sessionQuestions || {}) },
+                  classSessionQuestions: { ...(staticData.classSessionQuestions || {}), ...(prev.classSessionQuestions || {}) },
+                  studentAnswers: canonicalizeAnswersMap({ ...(staticData.studentAnswers || {}), ...(prev.studentAnswers || {}) }),
+                  activeSessions: { ...(staticData.activeSessions || {}), ...(prev.activeSessions || {}) }
+                };
+                try {
+                  localStorage.setItem('shootingstar_full_backup', JSON.stringify(loadedData));
+                } catch (e) {}
+                return loadedData;
+              });
+              loadedFromServer = true;
+            }
+          }
+        }
+      } catch (staticErr) {
+        console.warn('[ShootingStar] Static /app-state.json fallback error:', staticErr);
       }
     }
 
@@ -983,28 +1023,53 @@ export default function App() {
 
   // Handler: Import full state / backup
   const handleImportState = async (
-    importedData: { classes: Classroom[]; students: Student[]; feedbacks?: FeedbackItem[] }
+    importedData: any
   ): Promise<boolean> => {
-    setAppState(prev => {
-      const nextState = {
-        ...prev,
-        classes: importedData.classes || prev.classes,
-        students: importedData.students || prev.students,
-        feedbacks: importedData.feedbacks || prev.feedbacks
-      };
-      saveStateToFirestore(nextState).catch(() => {});
-      return nextState;
-    });
-
     try {
-      fetch('/api/state/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(importedData)
-      }).catch(() => {});
-    } catch {}
+      const vaultFeedbacks = loadFeedbacksFromVault();
+      const mergedFeedbacks = mergeFeedbackArrays(
+        appState.feedbacks,
+        importedData.feedbacks || [],
+        vaultFeedbacks
+      );
+      saveFeedbacksToVault(mergedFeedbacks);
 
-    return true;
+      const nextState: AppStateData = {
+        ...appState,
+        classes: importedData.classes || appState.classes,
+        students: importedData.students || appState.students,
+        feedbacks: mergedFeedbacks,
+        teacherQuestions: { ...(appState.teacherQuestions || {}), ...(importedData.teacherQuestions || {}) },
+        sessionQuestions: { ...(appState.sessionQuestions || {}), ...(importedData.sessionQuestions || {}) },
+        classSessionQuestions: { ...(appState.classSessionQuestions || {}), ...(importedData.classSessionQuestions || {}) },
+        studentAnswers: canonicalizeAnswersMap({ ...(appState.studentAnswers || {}), ...(importedData.studentAnswers || {}) }),
+        activeSessions: { ...(appState.activeSessions || {}), ...(importedData.activeSessions || {}) }
+      };
+
+      setAppState(nextState);
+
+      // Save to localStorage full backup
+      try {
+        localStorage.setItem('shootingstar_full_backup', JSON.stringify(nextState));
+      } catch {}
+
+      // Push to Firestore & Server
+      saveStateToFirestore(nextState).catch(() => {});
+      syncVaultFeedbacksToFirestore(mergedFeedbacks).catch(() => {});
+
+      try {
+        fetch('/api/state/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(nextState)
+        }).catch(() => {});
+      } catch {}
+
+      return true;
+    } catch (e) {
+      console.error('[Import] Error:', e);
+      return false;
+    }
   };
 
   // Handler: Save teacher question for a specific class

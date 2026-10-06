@@ -1,4 +1,5 @@
-import { Classroom, Student, AppStateData } from '../types';
+import { Classroom, Student, AppStateData, FeedbackItem } from '../types';
+import initialFeedbacks from './initialFeedbacks.json';
 
 export function getDefaultClasses(): Classroom[] {
   return [
@@ -2002,14 +2003,18 @@ export function getDefaultSessionQuestions(): Record<number, string> {
   };
 }
 
+export function getDefaultFeedbacks(): FeedbackItem[] {
+  return (initialFeedbacks as FeedbackItem[]) || [];
+}
+
 export function getDefaultAppState(): AppStateData {
   return {
     classes: getDefaultClasses(),
     students: getDefaultStudents(),
-    feedbacks: [],
+    feedbacks: getDefaultFeedbacks(),
     aiEvaluations: {},
     teacherQuestions: {},
-    sessionQuestions: {},
+    sessionQuestions: getDefaultSessionQuestions(),
     classSessionQuestions: {},
     studentAnswers: {},
     activeSessions: {}

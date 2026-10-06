@@ -53,7 +53,9 @@ import {
   Heart,
   RotateCcw,
   ShieldCheck,
-  Cloud
+  Cloud,
+  Copy,
+  ClipboardCheck
 } from 'lucide-react';
 
 interface Props {
@@ -333,6 +335,61 @@ export const TeacherMode: React.FC<Props> = ({
       // ignore
     }
   }, [students.length, feedbacks.length]);
+
+  // Data Transfer Modal states (Phone <-> PC)
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState<boolean>(false);
+  const [pasteInputText, setPasteInputText] = useState<string>('');
+  const [pasteErrorMsg, setPasteErrorMsg] = useState<string>('');
+  const [copiedSuccessMsg, setCopiedSuccessMsg] = useState<string>('');
+
+  const handleCopyDataToClipboard = async () => {
+    try {
+      const backupData = {
+        classes,
+        students,
+        feedbacks,
+        teacherQuestions: teacherQuestions || {},
+        sessionQuestions: sessionQuestions || {},
+        classSessionQuestions: classSessionQuestions || {},
+        studentAnswers: studentAnswers || {},
+        activeSessions: activeSessions || {},
+        exportedAt: new Date().toISOString()
+      };
+      await navigator.clipboard.writeText(JSON.stringify(backupData));
+      setCopiedSuccessMsg(`현재 기기 데이터(피드백 ${feedbacks.length}건, 학생 ${students.length}명)가 클립보드에 복사되었습니다!`);
+      setTimeout(() => setCopiedSuccessMsg(''), 4000);
+      alert(`현재 기기의 데이터(피드백 ${feedbacks.length}건, 학생 ${students.length}명)가 클립보드에 복사되었습니다!\n\nPC나 다른 기기에서 교사 모드로 접속하신 후 [데이터 붙여넣기]를 누르시면 1초 만에 그대로 복원됩니다.`);
+    } catch (err: any) {
+      alert('클립보드 복사 실패: ' + err.message);
+    }
+  };
+
+  const handleApplyPastedData = async () => {
+    setPasteErrorMsg('');
+    if (!pasteInputText.trim()) {
+      setPasteErrorMsg('붙여넣을 데이터 텍스트를 입력해주세요.');
+      return;
+    }
+    try {
+      const json = JSON.parse(pasteInputText.trim());
+      if (json && Array.isArray(json.classes) && Array.isArray(json.students)) {
+        if (onImportState) {
+          const ok = await onImportState(json);
+          if (ok) {
+            alert(`성공적으로 복원되었습니다! (학급 ${json.classes.length}개, 학생 ${json.students.length}명, 피드백 ${json.feedbacks?.length || 0}건)`);
+            setIsPasteModalOpen(false);
+            setPasteInputText('');
+          } else {
+            setPasteErrorMsg('데이터 적용 중 오류가 발생했습니다.');
+          }
+        }
+      } else {
+        setPasteErrorMsg('올바른 데이터 형식이 아닙니다. JSON 형식을 확인해주세요.');
+      }
+    } catch (err: any) {
+      setPasteErrorMsg('데이터 해석 오류: ' + err.message);
+    }
+  };
 
   // Sync selected class ids when classes change
   useEffect(() => {
@@ -2714,7 +2771,7 @@ export const TeacherMode: React.FC<Props> = ({
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
               {/* 1. Download Backup JSON */}
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800/80 space-y-2.5">
                 <div className="flex items-center gap-2 text-slate-200 font-bold text-xs">
@@ -2785,6 +2842,46 @@ export const TeacherMode: React.FC<Props> = ({
                   <Sparkles className="w-3.5 h-3.5" />
                   로컬 캐시에서 즉시 복원
                 </button>
+              </div>
+
+              {/* 4. Instant Clipboard Transfer (Phone <-> PC) */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-sky-400/40 space-y-2.5 shadow-md shadow-sky-950/40">
+                <div className="flex items-center gap-2 text-sky-200 font-bold text-xs">
+                  <Copy className="w-4 h-4 text-sky-400" />
+                  스마트폰 ⇄ PC 텍스트로 즉시 전송
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  스마트폰에서 '데이터 복사'를 누르고 PC에서 '붙여넣기'하면 1초 만에 그대로 복원됩니다.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopyDataToClipboard}
+                    className="py-2 px-2 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 border border-sky-500/40 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    title="현재 기기 데이터를 클립보드에 텍스트로 복사"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    데이터 복사
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPasteErrorMsg('');
+                      setPasteInputText('');
+                      setIsPasteModalOpen(true);
+                    }}
+                    className="py-2 px-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    title="복사한 텍스트 데이터를 여기에 붙여넣어 즉시 복원"
+                  >
+                    <ClipboardCheck className="w-3.5 h-3.5" />
+                    붙여넣기
+                  </button>
+                </div>
+                {copiedSuccessMsg && (
+                  <div className="text-[10px] text-sky-400 font-bold animate-pulse">
+                    ✓ {copiedSuccessMsg}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -3270,6 +3367,71 @@ export const TeacherMode: React.FC<Props> = ({
                 </div>
               );
             })()}
+          </div>
+        </div>
+      )}
+
+      {/* Instant Data Paste Modal */}
+      {isPasteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2 text-white font-extrabold text-sm sm:text-base">
+                <ClipboardCheck className="w-5 h-5 text-emerald-400" />
+                <span>데이터 텍스트 붙여넣기 및 즉시 복원</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPasteModalOpen(false);
+                  setPasteErrorMsg('');
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              스마트폰 교사 모드의 <strong className="text-sky-300">[데이터 복사]</strong> 버튼을 눌러 복사한 텍스트를 아래 입력창에 붙여넣기(Ctrl+V) 하세요. 학생 명단 및 피드백 전체가 즉시 복원됩니다.
+            </p>
+
+            <textarea
+              value={pasteInputText}
+              onChange={(e) => setPasteInputText(e.target.value)}
+              placeholder="여기에 복사한 JSON 텍스트 데이터를 붙여넣으세요..."
+              rows={8}
+              className="w-full p-3 rounded-xl bg-slate-950 border border-slate-700 text-xs text-slate-200 placeholder-slate-500 font-mono focus:outline-none focus:border-emerald-500 resize-none"
+            />
+
+            {pasteErrorMsg && (
+              <div className="p-2.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{pasteErrorMsg}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPasteModalOpen(false);
+                  setPasteErrorMsg('');
+                }}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all cursor-pointer"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyPastedData}
+                disabled={!pasteInputText.trim()}
+                className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold transition-all shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Check className="w-4 h-4" />
+                지금 복원 및 전체 반영
+              </button>
+            </div>
           </div>
         </div>
       )}
