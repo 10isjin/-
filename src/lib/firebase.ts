@@ -159,10 +159,15 @@ export async function syncVaultFeedbacksToFirestore(vaultFeedbacks: FeedbackItem
       }
     } catch {}
 
+    const TEST_PERIOD_CUTOFF = 1791126000000;
     const map = new Map<string, FeedbackItem>();
-    existingFeedbacks.forEach(f => { if (f && f.id) map.set(f.id, f); });
+    existingFeedbacks.forEach(f => {
+      if (f && f.id && (!f.timestamp || f.timestamp >= TEST_PERIOD_CUTOFF)) {
+        map.set(f.id, f);
+      }
+    });
     vaultFeedbacks.forEach(f => {
-      if (f && f.id) {
+      if (f && f.id && (!f.timestamp || f.timestamp >= TEST_PERIOD_CUTOFF)) {
         const curr = map.get(f.id);
         if (!curr) {
           map.set(f.id, f);
@@ -256,9 +261,12 @@ export async function fetchStateFromFirestore(): Promise<any | null> {
 export function canonicalizeAnswersMap(answers: any): Record<string, any> {
   const result: Record<string, any> = {};
   if (!answers || typeof answers !== 'object') return result;
+  const TEST_PERIOD_CUTOFF = 1791126000000;
   for (const [key, val] of Object.entries(answers)) {
     const v: any = val;
     if (!v || !v.studentId) continue;
+    const t = v.updatedAt || v.submittedAt || v.timestamp || 0;
+    if (t && t < TEST_PERIOD_CUTOFF) continue;
     if (v.classId === '3-1' && (v.studentName === '권아준' || v.studentId.includes('c3-1-1'))) {
       continue;
     }

@@ -61,6 +61,9 @@ export function saveFeedbacksToVault(feedbacks: FeedbackItem[]) {
 }
 
 // Bi-directional merge by ID: guarantees no feedback or star is EVER lost or overwritten by empty arrays
+// Excludes test period feedbacks (9/30, 10/1, 10/2) created before 2026-10-05 KST
+const TEST_PERIOD_CUTOFF = 1791126000000;
+
 export function mergeFeedbackArrays(
   existing: FeedbackItem[] = [],
   incoming: FeedbackItem[] = [],
@@ -69,6 +72,7 @@ export function mergeFeedbackArrays(
   const map = new Map<string, FeedbackItem>();
   const add = (f: FeedbackItem) => {
     if (!f || !f.id) return;
+    if (f.timestamp && f.timestamp < TEST_PERIOD_CUTOFF) return;
     const curr = map.get(f.id);
     if (!curr) {
       map.set(f.id, f);
