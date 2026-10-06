@@ -97,7 +97,14 @@ const HATE_PATTERNS = [
  */
 export function normalizeCleanText(text: string): string {
   if (!text) return '';
-  return text
+  // Whitelist safe physical education basketball terminology to prevent accidental false positives (e.g. '릴리즈 시 팔로우 스루')
+  const safeText = text
+    .replace(/팔로우\s*스[루로우]+/g, '___followthru___')
+    .replace(/팔로우/g, '___follow___')
+    .replace(/팔꿈치/g, '___elbow___')
+    .replace(/시\s*팔(?=[을에과도은는])/g, '시___arm___');
+
+  return safeText
     .replace(/[\u200B-\u200D\uFEFF]/g, '') // zero-width spaces
     .replace(/[._\-~`!@#$%^&*()+=[\]{}|;:'",<>/?\\]/g, '') // symbols between characters
     .replace(/\s+/g, ''); // all whitespace for compact analysis
@@ -112,11 +119,16 @@ export function checkCleanBot(text: string): CleanBotResult {
   }
 
   const raw = text.trim();
-  const normalized = normalizeCleanText(raw);
+  const safeRaw = raw
+    .replace(/팔로우\s*스[루로우]+/g, '___followthru___')
+    .replace(/팔로우/g, '___follow___')
+    .replace(/팔꿈치/g, '___elbow___')
+    .replace(/시\s*팔(?=[을에과도은는])/g, '시___arm___');
+  const normalized = normalizeCleanText(safeRaw);
 
   // Check 1: Sexual terms (Highest Priority)
   for (const pattern of SEXUAL_PATTERNS) {
-    if (pattern.test(raw) || pattern.test(normalized)) {
+    if (pattern.test(safeRaw) || pattern.test(normalized)) {
       return {
         isValid: false,
         category: 'sexual',
@@ -127,7 +139,7 @@ export function checkCleanBot(text: string): CleanBotResult {
 
   // Check 2: Profanity & swear words
   for (const pattern of PROFANITY_PATTERNS) {
-    if (pattern.test(raw) || pattern.test(normalized)) {
+    if (pattern.test(safeRaw) || pattern.test(normalized)) {
       return {
         isValid: false,
         category: 'profanity',

@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppMode } from '../types';
-import { Sparkles, ArrowLeft, RefreshCw, Shield, Star, Users, Crosshair, QrCode } from 'lucide-react';
+import { Sparkles, ArrowLeft, RefreshCw, Shield, Star, Users, Crosshair, QrCode, Cloud } from 'lucide-react';
 
 interface Props {
   currentMode: AppMode;
@@ -8,6 +8,8 @@ interface Props {
   onRefresh: () => void;
   isRefreshing: boolean;
   onOpenQrModal?: () => void;
+  onSyncCloud?: () => Promise<void>;
+  isSyncingCloud?: boolean;
 }
 
 export const Navbar: React.FC<Props> = ({
@@ -15,7 +17,9 @@ export const Navbar: React.FC<Props> = ({
   onSelectMode,
   onRefresh,
   isRefreshing,
-  onOpenQrModal
+  onOpenQrModal,
+  onSyncCloud,
+  isSyncingCloud
 }) => {
   const getModeInfo = () => {
     switch (currentMode) {
@@ -99,6 +103,21 @@ export const Navbar: React.FC<Props> = ({
 
         {/* Right action controls */}
         <div className="flex items-center gap-2">
+          {/* Cloud Sync Button - Available on Home, Teacher, and Overview modes, hidden in Student modes (performer/observer) */}
+          {onSyncCloud && currentMode !== 'performer' && currentMode !== 'observer' && (
+            <button
+              type="button"
+              onClick={onSyncCloud}
+              disabled={isSyncingCloud || isRefreshing}
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-extrabold text-sky-200 bg-sky-500/20 border border-sky-400/50 hover:bg-sky-500/30 hover:border-sky-300 hover:text-white transition-all shadow-md shadow-sky-500/20 cursor-pointer active:scale-95 disabled:opacity-50"
+              title="내 기기 데이터를 클라우드로 즉시 동기화하고 최신 결과를 불러옵니다"
+            >
+              <Cloud className={`w-3.5 h-3.5 text-sky-300 ${isSyncingCloud ? 'animate-bounce text-sky-200' : ''}`} />
+              <span className="hidden sm:inline">{isSyncingCloud ? '동기화 중...' : '클라우드 즉시 동기화'}</span>
+              <span className="sm:hidden text-[11px]">{isSyncingCloud ? '동기화중' : '클라우드 동기화'}</span>
+            </button>
+          )}
+
           {/* QR 친구에게 공유하기 버튼 */}
           <button
             type="button"

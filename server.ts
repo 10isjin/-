@@ -134,23 +134,29 @@ const CLEANBOT_HATE = [
 function checkServerCleanBot(text: string): { isValid: boolean; message?: string } {
   if (!text || typeof text !== 'string') return { isValid: true };
   const raw = text.trim();
-  const normalized = raw
+  const safeRaw = raw
+    .replace(/팔로우\s*스[루로우]+/g, '___followthru___')
+    .replace(/팔로우/g, '___follow___')
+    .replace(/팔꿈치/g, '___elbow___')
+    .replace(/시\s*팔(?=[을에과도은는])/g, '시___arm___');
+
+  const normalized = safeRaw
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
     .replace(/[._\-~`!@#$%^&*()+=[\]{}|;:'",<>/?\\]/g, '')
     .replace(/\s+/g, '');
 
   for (const p of CLEANBOT_SEXUAL) {
-    if (p.test(raw) || p.test(normalized)) {
+    if (p.test(safeRaw) || p.test(normalized)) {
       return { isValid: false, message: "클린봇 감지: 성적 수치심을 유발하는 부적절한 표현이 포함되어 등록할 수 없습니다." };
     }
   }
   for (const p of CLEANBOT_PROFANITY) {
-    if (p.test(raw) || p.test(normalized)) {
+    if (p.test(safeRaw) || p.test(normalized)) {
       return { isValid: false, message: "클린봇 감지: 욕설 또는 비속어가 포함되어 등록할 수 없습니다." };
     }
   }
   for (const p of CLEANBOT_HATE) {
-    if (p.test(raw) || p.test(normalized)) {
+    if (p.test(safeRaw) || p.test(normalized)) {
       return { isValid: false, message: "클린봇 감지: 인신공격 또는 혐오 표현이 포함되어 등록할 수 없습니다." };
     }
   }
@@ -257,7 +263,7 @@ function saveState(state: AppStateData) {
       updatedAt: Date.now()
     }));
 
-    setDoc(FIRESTORE_STATE_DOC, sanitizedFirestorePayload).catch(err => {
+    setDoc(FIRESTORE_STATE_DOC, sanitizedFirestorePayload, { merge: true }).catch(err => {
       console.warn("[Firestore] Failed to save state to Cloud Firestore:", err);
     });
   } catch (err) {
@@ -1053,6 +1059,24 @@ app.post("/api/feedback", (req, res) => {
     feedback: newFeedback,
     isUpdate: false,
     message: `${parsedSession}차시 피드백이 등록되었습니다.`
+  });
+});
+
+// 5-0. Batch sync feedbacks from client vault / device
+app.post("/api/feedback/batch-sync", (req, res) => {
+  const { feedbacks } = req.body || {};
+  if (!Array.isArray(feedbacks) || feedbacks.length === 0) {
+    return res.json({ success: true, count: (appState.feedbacks || []).length, message: "동기화할 피드백이 없습니다." });
+  }
+
+  const validFeedbacks = feedbacks.filter(isRealServerFeedback);
+  appState.feedbacks = mergeServerFeedbacks(appState.feedbacks || [], validFeedbacks);
+  saveState(appState);
+
+  res.json({
+    success: true,
+    count: appState.feedbacks.length,
+    message: `${validFeedbacks.length}건의 피드백이 서버 및 클라우드와 성공적으로 동기화되었습니다.`
   });
 });
 

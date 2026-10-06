@@ -52,7 +52,8 @@ import {
   Clock,
   Heart,
   RotateCcw,
-  ShieldCheck
+  ShieldCheck,
+  Cloud
 } from 'lucide-react';
 
 interface Props {
@@ -99,6 +100,7 @@ interface Props {
   }) => Promise<boolean>;
   onSetActiveSession?: (classId: string, session: number) => Promise<boolean>;
   onBatchSetActiveSession?: (session: number, classIds?: string[]) => Promise<boolean>;
+  onSyncAllFeedbacksToCloud?: () => Promise<{ success: boolean; count: number; message: string }>;
   onResetData: () => Promise<boolean>;
 }
 
@@ -155,8 +157,13 @@ export const TeacherMode: React.FC<Props> = ({
   onSubmitTeacherFeedback,
   onSetActiveSession,
   onBatchSetActiveSession,
+  onSyncAllFeedbacksToCloud,
   onResetData
 }) => {
+  // Cloud sync state
+  const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
+  const [cloudSyncMessage, setCloudSyncMessage] = useState<string>('');
+
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [pinInput, setPinInput] = useState<string>('');
@@ -474,6 +481,11 @@ export const TeacherMode: React.FC<Props> = ({
       classes,
       students,
       feedbacks,
+      teacherQuestions: teacherQuestions || {},
+      sessionQuestions: sessionQuestions || {},
+      classSessionQuestions: classSessionQuestions || {},
+      studentAnswers: studentAnswers || {},
+      activeSessions: activeSessions || {},
       exportedAt: new Date().toISOString()
     };
     const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
@@ -931,10 +943,33 @@ export const TeacherMode: React.FC<Props> = ({
 
           <button
             type="submit"
-            className="w-full py-3 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-bold text-sm transition-all shadow-lg shadow-rose-500/20"
+            className="w-full py-3 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-bold text-sm transition-all shadow-lg shadow-rose-500/20 cursor-pointer"
           >
             관제센터 입장하기
           </button>
+
+          {/* Quick Cloud Sync shortcut on login card */}
+          {onSyncAllFeedbacksToCloud && (
+            <div className="pt-3 border-t border-slate-800/80">
+              <button
+                type="button"
+                disabled={isSyncingCloud}
+                onClick={async () => {
+                  setIsSyncingCloud(true);
+                  const res = await onSyncAllFeedbacksToCloud();
+                  setIsSyncingCloud(false);
+                  alert(res.message);
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 font-extrabold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <Cloud className={`w-4 h-4 text-amber-400 ${isSyncingCloud ? 'animate-bounce' : ''}`} />
+                <span>{isSyncingCloud ? '동기화 중...' : '내 기기 피드백 클라우드로 즉시 동기화 실행'}</span>
+              </button>
+              <p className="text-[11px] text-slate-400 text-center mt-1.5 leading-relaxed">
+                스마트폰 등 현재 기기에 저장된 피드백을 즉시 클라우드로 전송합니다
+              </p>
+            </div>
+          )}
         </form>
       </div>
     );
@@ -958,7 +993,28 @@ export const TeacherMode: React.FC<Props> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 self-start sm:self-center">
+        <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-center">
+          {/* Quick prominent Cloud Sync button in Teacher Header */}
+          {onSyncAllFeedbacksToCloud && (
+            <button
+              type="button"
+              disabled={isSyncingCloud}
+              onClick={async () => {
+                setIsSyncingCloud(true);
+                const res = await onSyncAllFeedbacksToCloud();
+                setIsSyncingCloud(false);
+                setCloudSyncMessage(res.message);
+                setTimeout(() => setCloudSyncMessage(''), 6000);
+                alert(res.message);
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold shadow-lg shadow-amber-500/20 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+              title="내 기기 데이터를 클라우드로 즉시 업로드하여 전체 기기와 실시간 동기화합니다"
+            >
+              <Cloud className={`w-4 h-4 ${isSyncingCloud ? 'animate-bounce' : ''}`} />
+              <span>{isSyncingCloud ? '동기화 중...' : '클라우드 즉시 동기화 실행'}</span>
+            </button>
+          )}
+
           <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold shadow-sm" title="학생들의 피드백 및 답변 작성 시 욕설과 성적 표현을 100% 자동 차단합니다.">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
@@ -1090,12 +1146,12 @@ export const TeacherMode: React.FC<Props> = ({
           onClick={() => setActiveTab('settings')}
           className={`col-span-2 sm:col-span-1 py-2.5 px-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
             activeTab === 'settings'
-              ? 'bg-rose-500 text-white shadow-md shadow-rose-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              ? 'bg-amber-400 text-slate-950 font-extrabold shadow-md shadow-amber-400/20'
+              : 'text-amber-300/90 hover:text-white hover:bg-slate-800/60'
           }`}
         >
-          <Trash2 className="w-3.5 h-3.5 shrink-0 text-rose-400" />
-          <span>데이터 관리·초기화</span>
+          <Cloud className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+          <span>클라우드 동기화 & 백업</span>
         </button>
       </div>
 
@@ -2610,6 +2666,52 @@ export const TeacherMode: React.FC<Props> = ({
                   </p>
                 </div>
               </div>
+            </div>
+
+            {/* Cloud Sync & Recovery Action Card */}
+            <div className="p-4 sm:p-5 rounded-xl bg-gradient-to-r from-amber-950/40 via-slate-950 to-orange-950/40 border border-amber-500/30 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center justify-center shrink-0">
+                    <Cloud className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h5 className="font-extrabold text-white text-sm flex items-center gap-2">
+                      내 기기 피드백 클라우드로 즉시 동기화 (전체 기기 실시간 반영)
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                        현재 피드백 {feedbacks.length}건
+                      </span>
+                    </h5>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      핸드폰이나 특정 PC에 보관된 피드백을 클라우드 데이터베이스로 즉시 일괄 업로드하여, PC·학생 스마트폰 등 모든 기기에서 즉시 동일한 결과를 확인할 수 있도록 동기화합니다.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={isSyncingCloud}
+                  onClick={async () => {
+                    if (onSyncAllFeedbacksToCloud) {
+                      setIsSyncingCloud(true);
+                      const res = await onSyncAllFeedbacksToCloud();
+                      setIsSyncingCloud(false);
+                      setCloudSyncMessage(res.message);
+                      setTimeout(() => setCloudSyncMessage(''), 6000);
+                      alert(res.message);
+                    }
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs transition-all shadow-lg flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isSyncingCloud ? 'animate-spin' : ''}`} />
+                  {isSyncingCloud ? '동기화 중...' : '클라우드 즉시 동기화 실행'}
+                </button>
+              </div>
+              {cloudSyncMessage && (
+                <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-2">
+                  <Check className="w-4 h-4" />
+                  {cloudSyncMessage}
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-2">

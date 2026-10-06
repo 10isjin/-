@@ -1,17 +1,21 @@
 import React from 'react';
 import { AppMode } from '../types';
-import { Sparkles, Crosshair, Star, Shield, ArrowRight, Award, Trophy, Users } from 'lucide-react';
+import { Sparkles, Crosshair, Star, Shield, ArrowRight, Award, Trophy, Users, Cloud } from 'lucide-react';
 
 interface Props {
   onSelectMode: (mode: AppMode) => void;
   totalFeedbacks: number;
   totalStudents: number;
+  onSyncCloud?: () => Promise<void>;
+  isSyncingCloud?: boolean;
 }
 
 export const ModeSelection: React.FC<Props> = ({
   onSelectMode,
   totalFeedbacks,
-  totalStudents
+  totalStudents,
+  onSyncCloud,
+  isSyncingCloud
 }) => {
   const modes = [
     {
@@ -85,8 +89,8 @@ export const ModeSelection: React.FC<Props> = ({
           <span className="text-xs sm:text-sm text-slate-400 mt-1 block">입장하실 모드를 아래에서 선택해주세요.</span>
         </p>
 
-        {/* Quick stat counter badge */}
-        <div className="flex items-center justify-center gap-6 mt-6 pt-6 border-t border-slate-800/60 text-xs text-slate-400">
+        {/* Quick stat counter badge & Cloud Sync shortcut */}
+        <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 mt-6 pt-6 border-t border-slate-800/60 text-xs text-slate-400">
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-sky-400" />
             <span>등록 학생: <strong className="text-white font-bold">{totalStudents}명</strong></span>
@@ -95,6 +99,21 @@ export const ModeSelection: React.FC<Props> = ({
             <Trophy className="w-4 h-4 text-amber-400" />
             <span>누적 피드백: <strong className="text-white font-bold">{totalFeedbacks}건</strong></span>
           </div>
+          {onSyncCloud && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSyncCloud();
+              }}
+              disabled={isSyncingCloud}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-500/15 border border-sky-500/40 text-sky-300 hover:bg-sky-500/25 font-bold text-[11px] transition-all cursor-pointer shadow-sm active:scale-95 disabled:opacity-50"
+              title="현재 기기 피드백을 클라우드 및 서버와 즉시 동기화합니다"
+            >
+              <Cloud className={`w-3.5 h-3.5 text-sky-400 ${isSyncingCloud ? 'animate-bounce' : ''}`} />
+              <span>{isSyncingCloud ? '동기화 중...' : '클라우드 즉시 동기화 실행'}</span>
+            </button>
+          )}
         </div>
       </div>
 

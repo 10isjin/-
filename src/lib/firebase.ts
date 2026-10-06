@@ -46,11 +46,21 @@ testFirestoreConnection();
  */
 
 // Save or update a single feedback document permanently in Firestore
-export async function saveFeedbackToFirestore(feedback: FeedbackItem): Promise<boolean> {
+export async function saveFeedbackToFirestore(feedback: FeedbackItem, allCurrentFeedbacks?: FeedbackItem[]): Promise<boolean> {
   try {
     if (!feedback || !feedback.id) return false;
     const cleanItem = JSON.parse(JSON.stringify(feedback));
-    await setDoc(doc(db, "feedbacks", feedback.id), cleanItem, { merge: true });
+    
+    // 1. Direct doc write to /feedbacks/{id} (isolated doc)
+    await setDoc(doc(db, "feedbacks", feedback.id), cleanItem, { merge: true }).catch(() => {});
+    
+    // 2. Also update central STATE_DOC_REF with the updated feedbacks array if provided (1 single write, triggers 1 read per client)
+    if (allCurrentFeedbacks && Array.isArray(allCurrentFeedbacks)) {
+      await setDoc(STATE_DOC_REF, {
+        feedbacks: allCurrentFeedbacks,
+        updatedAt: Date.now()
+      }, { merge: true }).catch(() => {});
+    }
     return true;
   } catch (err) {
     console.error("[Firestore] Error saving individual feedback:", err);
@@ -62,7 +72,8 @@ export async function saveFeedbackToFirestore(feedback: FeedbackItem): Promise<b
 export async function rewardFeedbackInFirestore(
   feedbackId: string,
   favoriteRewarded: boolean,
-  favoriteRewardedAt?: number
+  favoriteRewardedAt?: number,
+  allCurrentFeedbacks?: FeedbackItem[]
 ): Promise<boolean> {
   try {
     const ref = doc(db, "feedbacks", feedbackId);
@@ -73,7 +84,13 @@ export async function rewardFeedbackInFirestore(
     if (favoriteRewardedAt) {
       updateData.favoriteRewardedAt = favoriteRewardedAt;
     }
-    await setDoc(ref, updateData, { merge: true });
+    await setDoc(ref, updateData, { merge: true }).catch(() => {});
+    if (allCurrentFeedbacks && Array.isArray(allCurrentFeedbacks)) {
+      await setDoc(STATE_DOC_REF, {
+        feedbacks: allCurrentFeedbacks,
+        updatedAt: Date.now()
+      }, { merge: true }).catch(() => {});
+    }
     return true;
   } catch (err) {
     console.error("[Firestore] Error updating feedback reward in Firestore:", err);
@@ -81,8 +98,21 @@ export async function rewardFeedbackInFirestore(
   }
 }
 
-// Fetch all feedbacks directly from the /feedbacks collection
+// Fetch all feedbacks - optimized to check central STATE_DOC_REF first (1 read instead of 300 reads!)
 export async function fetchFeedbacksFromFirestore(): Promise<FeedbackItem[]> {
+  try {
+    const snap = await getDoc(STATE_DOC_REF);
+    if (snap.exists()) {
+      const data = snap.data();
+      if (Array.isArray(data.feedbacks) && data.feedbacks.length > 0) {
+        return data.feedbacks as FeedbackItem[];
+      }
+    }
+  } catch (err) {
+    console.warn("[Firestore] Error fetching feedbacks from STATE_DOC_REF:", err);
+  }
+
+  // Fallback to collection only if state doc is empty
   try {
     const snap = await getDocs(FEEDBACKS_COLLECTION);
     const list: FeedbackItem[] = [];
@@ -92,30 +122,72 @@ export async function fetchFeedbacksFromFirestore(): Promise<FeedbackItem[]> {
     });
     return list;
   } catch (err) {
-    console.error("[Firestore] Error fetching feedbacks collection:", err);
+    console.warn("[Firestore] Error fetching feedbacks collection:", err);
     return [];
   }
 }
 
-// Real-time listener for the /feedbacks collection
-// Whenever ANY student in any class submits or stars a feedback, all students & teachers receive it instantly!
+// Real-time listener: listens to STATE_DOC_REF's feedbacks field
+// Consumes 1 read per client instead of 300 reads per connection, saving 99.7% of quota!
 export function subscribeToFeedbacksCollection(callback: (feedbacks: FeedbackItem[]) => void): () => void {
   return onSnapshot(
-    FEEDBACKS_COLLECTION,
+    STATE_DOC_REF,
     (snap) => {
-      const list: FeedbackItem[] = [];
-      snap.forEach((d) => {
-        const item = d.data() as FeedbackItem;
-        if (item && item.id) {
-          list.push(item);
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data && Array.isArray(data.feedbacks)) {
+          callback(data.feedbacks as FeedbackItem[]);
         }
-      });
-      callback(list);
+      }
     },
     (err) => {
-      console.warn("[Firestore] Realtime feedbacks collection snapshot error:", err);
+      console.warn("[Firestore] Realtime state feedbacks snapshot error:", err);
     }
   );
+}
+
+// Batch push local vault feedbacks to Firestore to guarantee cloud sync across all devices
+export async function syncVaultFeedbacksToFirestore(vaultFeedbacks: FeedbackItem[]): Promise<boolean> {
+  if (!Array.isArray(vaultFeedbacks) || vaultFeedbacks.length === 0) return true;
+  try {
+    let existingFeedbacks: FeedbackItem[] = [];
+    try {
+      const stateDoc = await getDoc(STATE_DOC_REF);
+      if (stateDoc && stateDoc.exists()) {
+        const d = stateDoc.data();
+        if (Array.isArray(d.feedbacks)) existingFeedbacks = d.feedbacks;
+      }
+    } catch {}
+
+    const map = new Map<string, FeedbackItem>();
+    existingFeedbacks.forEach(f => { if (f && f.id) map.set(f.id, f); });
+    vaultFeedbacks.forEach(f => {
+      if (f && f.id) {
+        const curr = map.get(f.id);
+        if (!curr) {
+          map.set(f.id, f);
+        } else {
+          map.set(f.id, {
+            ...curr,
+            ...f,
+            favoriteRewarded: Boolean(curr.favoriteRewarded || f.favoriteRewarded),
+            favoriteRewardedAt: curr.favoriteRewardedAt || f.favoriteRewardedAt
+          });
+        }
+      }
+    });
+    const mergedList = Array.from(map.values());
+
+    await setDoc(STATE_DOC_REF, {
+      feedbacks: mergedList,
+      updatedAt: Date.now()
+    }, { merge: true });
+
+    return true;
+  } catch (e) {
+    console.warn("[Firestore] Error syncing vault feedbacks to Firestore:", e);
+    return false;
+  }
 }
 
 // Delete a single feedback document from Firestore
@@ -208,6 +280,7 @@ export async function saveStateToFirestore(state: any): Promise<boolean> {
     const cleanPayload = JSON.parse(JSON.stringify({
       classes: state.classes || [],
       students: state.students || [],
+      feedbacks: Array.isArray(state.feedbacks) ? state.feedbacks : [],
       aiEvaluations: state.aiEvaluations || {},
       teacherQuestions: state.teacherQuestions || {},
       classSessionQuestions: state.classSessionQuestions || {},
@@ -220,7 +293,7 @@ export async function saveStateToFirestore(state: any): Promise<boolean> {
       gameScores: state.gameScores || [],
       updatedAt: Date.now()
     }));
-    await setDoc(STATE_DOC_REF, cleanPayload);
+    await setDoc(STATE_DOC_REF, cleanPayload, { merge: true });
     return true;
   } catch (err) {
     console.error("[Firestore] Error saving state:", err);
