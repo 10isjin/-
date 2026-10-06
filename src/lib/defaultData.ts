@@ -2006,6 +2006,22 @@ export function getDefaultFeedbacks(): FeedbackItem[] {
   return [];
 }
 
+export function getDefaultActiveSessions(): Record<string, number> {
+  return {
+    '3-1': 1,
+    '3-2': 1,
+    '3-3': 1,
+    '3-4': 1,
+    '3-5': 1,
+    '3-6': 1,
+    '3-7': 1,
+    '3-8': 1,
+    '3-9': 1,
+    '3-10': 1,
+    '3-11': 1
+  };
+}
+
 export function getDefaultAppState(): AppStateData {
   return {
     classes: getDefaultClasses(),
@@ -2016,6 +2032,6 @@ export function getDefaultAppState(): AppStateData {
     sessionQuestions: getDefaultSessionQuestions(),
     classSessionQuestions: {},
     studentAnswers: {},
-    activeSessions: {}
+    activeSessions: getDefaultActiveSessions()
   };
 }
