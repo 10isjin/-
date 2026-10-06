@@ -1,5 +1,4 @@
 import { Classroom, Student, AppStateData, FeedbackItem } from '../types';
-import initialFeedbacks from './initialFeedbacks.json';
 
 export function getDefaultClasses(): Classroom[] {
   return [
@@ -2004,14 +2003,14 @@ export function getDefaultSessionQuestions(): Record<number, string> {
 }
 
 export function getDefaultFeedbacks(): FeedbackItem[] {
-  return (initialFeedbacks as FeedbackItem[]) || [];
+  return [];
 }
 
 export function getDefaultAppState(): AppStateData {
   return {
     classes: getDefaultClasses(),
     students: getDefaultStudents(),
-    feedbacks: getDefaultFeedbacks(),
+    feedbacks: [],
     aiEvaluations: {},
     teacherQuestions: {},
     sessionQuestions: getDefaultSessionQuestions(),

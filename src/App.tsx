@@ -40,13 +40,36 @@ export function isRealStudentFeedback(f: FeedbackItem): boolean {
   return true;
 }
 
+// Exclude test period feedbacks (9/30, 10/1, 10/2) created before 2026-10-05 KST
+export const TEST_PERIOD_CUTOFF = 1791126000000;
+
+// Strict filter: purge ANY synthetic / mock / AI-generated feedbacks or old test items
+export function isSyntheticOrTestFeedback(f: any): boolean {
+  if (!f || !f.id) return true;
+  if (typeof f.id === 'string' && (f.id.startsWith('fb_3-8_') || f.id.startsWith('fb_3-9_'))) {
+    return true;
+  }
+  if (f.timestamp && f.timestamp < TEST_PERIOD_CUTOFF) {
+    return true;
+  }
+  return false;
+}
+
 // Dedicated local vault for permanent feedback & star retention
 export function loadFeedbacksFromVault(): FeedbackItem[] {
   try {
     const raw = localStorage.getItem('shootingstar_feedbacks_vault');
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const cleaned = parsed.filter(f => f && f.id && !isSyntheticOrTestFeedback(f));
+        if (cleaned.length !== parsed.length) {
+          try {
+            localStorage.setItem('shootingstar_feedbacks_vault', JSON.stringify(cleaned));
+          } catch {}
+        }
+        return cleaned;
+      }
     }
   } catch {}
   return [];
@@ -54,16 +77,14 @@ export function loadFeedbacksFromVault(): FeedbackItem[] {
 
 export function saveFeedbacksToVault(feedbacks: FeedbackItem[]) {
   try {
-    localStorage.setItem('shootingstar_feedbacks_vault', JSON.stringify(feedbacks));
+    const cleaned = (feedbacks || []).filter(f => f && f.id && !isSyntheticOrTestFeedback(f));
+    localStorage.setItem('shootingstar_feedbacks_vault', JSON.stringify(cleaned));
   } catch (e) {
     console.warn('[Vault] Quota exceeded on feedbacks vault:', e);
   }
 }
 
 // Bi-directional merge by ID: guarantees no feedback or star is EVER lost or overwritten by empty arrays
-// Excludes test period feedbacks (9/30, 10/1, 10/2) created before 2026-10-05 KST
-const TEST_PERIOD_CUTOFF = 1791126000000;
-
 export function mergeFeedbackArrays(
   existing: FeedbackItem[] = [],
   incoming: FeedbackItem[] = [],
@@ -72,7 +93,7 @@ export function mergeFeedbackArrays(
   const map = new Map<string, FeedbackItem>();
   const add = (f: FeedbackItem) => {
     if (!f || !f.id) return;
-    if (f.timestamp && f.timestamp < TEST_PERIOD_CUTOFF) return;
+    if (isSyntheticOrTestFeedback(f)) return; // Strictly discard any mock/synthetic feedback!
     const curr = map.get(f.id);
     if (!curr) {
       map.set(f.id, f);
@@ -467,6 +488,27 @@ export default function App() {
 
   // Real-time Firestore sync & initial fetch
   useEffect(() => {
+    // 0. Active purge of any synthetic / mock feedbacks from local storage on this device
+    try {
+      const rawBackup = localStorage.getItem('shootingstar_full_backup');
+      if (rawBackup) {
+        const parsedBackup = JSON.parse(rawBackup);
+        if (parsedBackup && Array.isArray(parsedBackup.feedbacks)) {
+          const cleanedBackupFb = parsedBackup.feedbacks.filter((f: any) => !isSyntheticOrTestFeedback(f));
+          if (cleanedBackupFb.length !== parsedBackup.feedbacks.length) {
+            parsedBackup.feedbacks = cleanedBackupFb;
+            localStorage.setItem('shootingstar_full_backup', JSON.stringify(parsedBackup));
+          }
+        }
+      }
+      const cleanedVault = loadFeedbacksFromVault();
+      setAppState(prev => {
+        const cleanedPrev = (prev.feedbacks || []).filter(f => !isSyntheticOrTestFeedback(f));
+        const merged = mergeFeedbackArrays(cleanedPrev, cleanedVault);
+        return { ...prev, feedbacks: merged };
+      });
+    } catch {}
+
     fetchState(true);
 
     // Auto-sync: If local vault contains feedbacks, push to Firestore & Server in the background
