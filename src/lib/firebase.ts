@@ -12,11 +12,19 @@ import {
   getDocFromServer,
   query,
   orderBy,
-  limit
+  limit,
+  disableNetwork,
+  enableNetwork,
+  setLogLevel
 } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 import { getDefaultSessionQuestions } from "./defaultData";
 import { FeedbackItem } from "../types";
+
+// Silence verbose Firebase SDK internal backoff retry logs
+try {
+  setLogLevel("silent");
+} catch {}
 
 // Initialize Firebase App
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -30,6 +38,49 @@ export const db = firebaseConfig.firestoreDatabaseId
 const STATE_DOC_REF = doc(db, "app_state", "global_state");
 export const FEEDBACKS_COLLECTION = collection(db, "feedbacks");
 
+// Quota Circuit Breaker: If Firestore hits daily free tier write/read quota,
+// pause cloud Firestore write attempts to prevent console error storms and SDK retry loops.
+let isFirestoreQuotaExhausted = false;
+let quotaExhaustedResetTime = 0;
+
+export function isQuotaExhausted(): boolean {
+  if (!isFirestoreQuotaExhausted) return false;
+  if (Date.now() > quotaExhaustedResetTime) {
+    isFirestoreQuotaExhausted = false;
+    try {
+      enableNetwork(db).catch(() => {});
+    } catch {}
+    return false;
+  }
+  return true;
+}
+
+export function handleFirestoreError(err: any, operationName = "operation") {
+  if (!err) return;
+  const isQuota =
+    err?.code === "resource-exhausted" ||
+    (typeof err?.message === "string" && (
+      err.message.includes("resource-exhausted") ||
+      err.message.includes("Quota limit exceeded") ||
+      err.message.includes("RESOURCE_EXHAUSTED") ||
+      err.message.includes("Quota exceeded")
+    ));
+
+  if (isQuota) {
+    if (!isFirestoreQuotaExhausted) {
+      console.warn(`[Firestore] Free daily quota limit reached during ${operationName}. Gracefully switching to server/local storage.`);
+      isFirestoreQuotaExhausted = true;
+      // Cool down for 30 minutes before re-checking
+      quotaExhaustedResetTime = Date.now() + 30 * 60 * 1000;
+      try {
+        disableNetwork(db).catch(() => {});
+      } catch {}
+    }
+    return;
+  }
+  console.warn(`[Firestore] ${operationName} error:`, err?.message || err);
+}
+
 // Resilient promise timeout helper to prevent UI freezing / hanging
 export function withTimeout<T>(promise: Promise<T>, ms = 4000, fallback: T): Promise<T> {
   let timer: any;
@@ -40,22 +91,13 @@ export function withTimeout<T>(promise: Promise<T>, ms = 4000, fallback: T): Pro
     promise.then((res) => {
       clearTimeout(timer);
       return res;
-    }).catch(() => fallback),
+    }).catch((err) => {
+      handleFirestoreError(err, "withTimeout");
+      return fallback;
+    }),
     timeoutPromise
   ]);
 }
-
-// Validate connection to Firestore
-export async function testFirestoreConnection() {
-  try {
-    await withTimeout(getDocFromServer(STATE_DOC_REF), 3000, null as any);
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("the client is offline")) {
-      console.error("Please check your Firebase configuration.");
-    }
-  }
-}
-testFirestoreConnection();
 
 /**
  * 1. INDIVIDUAL FEEDBACK DOCUMENT OPERATIONS
@@ -65,6 +107,7 @@ testFirestoreConnection();
 
 // Save or update a single feedback document permanently in Firestore (Strictly isolated doc write, 0 broadcast reads)
 export async function saveFeedbackToFirestore(feedback: FeedbackItem): Promise<boolean> {
+  if (isQuotaExhausted()) return false;
   try {
     if (!feedback || !feedback.id) return false;
     const cleanItem = JSON.parse(JSON.stringify(feedback));
@@ -77,7 +120,7 @@ export async function saveFeedbackToFirestore(feedback: FeedbackItem): Promise<b
     );
     return true;
   } catch (err) {
-    console.error("[Firestore] Error saving individual feedback:", err);
+    handleFirestoreError(err, "saveFeedback");
     return false;
   }
 }
@@ -88,6 +131,7 @@ export async function rewardFeedbackInFirestore(
   favoriteRewarded: boolean,
   favoriteRewardedAt?: number
 ): Promise<boolean> {
+  if (isQuotaExhausted()) return false;
   try {
     const ref = doc(db, "feedbacks", feedbackId);
     const updateData: Record<string, any> = {
@@ -104,13 +148,14 @@ export async function rewardFeedbackInFirestore(
     );
     return true;
   } catch (err) {
-    console.error("[Firestore] Error updating feedback reward in Firestore:", err);
+    handleFirestoreError(err, "rewardFeedback");
     return false;
   }
 }
 
 // Fetch all feedbacks - optimized to check central STATE_DOC_REF first (1 read instead of 300 reads!)
 export async function fetchFeedbacksFromFirestore(): Promise<FeedbackItem[]> {
+  if (isQuotaExhausted()) return [];
   try {
     const snap = await withTimeout(getDoc(STATE_DOC_REF), 4000, null as any);
     if (snap && snap.exists && snap.exists()) {
@@ -120,7 +165,7 @@ export async function fetchFeedbacksFromFirestore(): Promise<FeedbackItem[]> {
       }
     }
   } catch (err) {
-    console.warn("[Firestore] Error fetching feedbacks from STATE_DOC_REF:", err);
+    handleFirestoreError(err, "fetchFeedbacksStateDoc");
   }
 
   // Fallback to collection only if state doc is empty
@@ -134,7 +179,7 @@ export async function fetchFeedbacksFromFirestore(): Promise<FeedbackItem[]> {
     });
     return list;
   } catch (err) {
-    console.warn("[Firestore] Error fetching feedbacks collection:", err);
+    handleFirestoreError(err, "fetchFeedbacksCollection");
     return [];
   }
 }
@@ -142,6 +187,7 @@ export async function fetchFeedbacksFromFirestore(): Promise<FeedbackItem[]> {
 // Real-time listener: listens to individual new/modified feedbacks in /feedbacks
 // Real-time stream captures newly submitted feedbacks and star updates for the entire class session
 export function subscribeToFeedbacksCollection(callback: (feedbacks: FeedbackItem[]) => void): () => void {
+  if (isQuotaExhausted()) return () => {};
   try {
     const q = query(FEEDBACKS_COLLECTION, orderBy('timestamp', 'desc'), limit(60));
     return onSnapshot(
@@ -159,17 +205,18 @@ export function subscribeToFeedbacksCollection(callback: (feedbacks: FeedbackIte
         }
       },
       (err) => {
-        console.warn("[Firestore] Realtime individual feedbacks snapshot error:", err);
+        handleFirestoreError(err, "feedbacksListener");
       }
     );
   } catch (err) {
-    console.warn("[Firestore] Error attaching feedbacks query listener:", err);
+    handleFirestoreError(err, "subscribeToFeedbacksCollection");
     return () => {};
   }
 }
 
 // Batch push local vault feedbacks to Firestore to guarantee cloud sync across all devices
 export async function syncVaultFeedbacksToFirestore(vaultFeedbacks: FeedbackItem[]): Promise<boolean> {
+  if (isQuotaExhausted()) return false;
   if (!Array.isArray(vaultFeedbacks) || vaultFeedbacks.length === 0) return true;
   try {
     let existingFeedbacks: FeedbackItem[] = [];
@@ -216,18 +263,19 @@ export async function syncVaultFeedbacksToFirestore(vaultFeedbacks: FeedbackItem
 
     return Boolean(ok);
   } catch (e) {
-    console.warn("[Firestore] Error syncing vault feedbacks to Firestore:", e);
+    handleFirestoreError(e, "syncVaultFeedbacksToFirestore");
     return false;
   }
 }
 
 // Delete a single feedback document from Firestore
 export async function deleteFeedbackFromFirestore(feedbackId: string): Promise<boolean> {
+  if (isQuotaExhausted()) return false;
   try {
     await withTimeout(deleteDoc(doc(db, "feedbacks", feedbackId)), 3000, false as any);
     return true;
   } catch (err) {
-    console.error("[Firestore] Error deleting feedback doc:", err);
+    handleFirestoreError(err, "deleteFeedback");
     return false;
   }
 }
@@ -239,6 +287,7 @@ export async function clearFeedbacksInFirestore(filter?: {
   studentId?: string;
   session?: number | 'all';
 }): Promise<number> {
+  if (isQuotaExhausted()) return 0;
   try {
     const snap = await withTimeout(getDocs(FEEDBACKS_COLLECTION), 4000, null as any);
     if (!snap) return 0;
@@ -265,7 +314,7 @@ export async function clearFeedbacksInFirestore(filter?: {
     }
     return count;
   } catch (err) {
-    console.error("[Firestore] Error clearing feedbacks in Firestore:", err);
+    handleFirestoreError(err, "clearFeedbacks");
     return 0;
   }
 }
@@ -274,18 +323,20 @@ export async function clearFeedbacksInFirestore(filter?: {
  * 2. GLOBAL APP STATE (Classes, Questions, Active Sessions)
  */
 export async function fetchStateFromFirestore(): Promise<any | null> {
+  if (isQuotaExhausted()) return null;
   try {
     const snap = await withTimeout(getDoc(STATE_DOC_REF), 4000, null as any);
     if (snap && snap.exists && snap.exists()) {
       return snap.data();
     }
   } catch (err) {
-    console.error("[Firestore] Error fetching state:", err);
+    handleFirestoreError(err, "fetchStateFromFirestore");
   }
   return null;
 }
 
 export async function saveStudentAnswerToFirestore(answer: any): Promise<boolean> {
+  if (isQuotaExhausted()) return false;
   try {
     if (!answer || !answer.classId || !answer.studentId || !answer.answer) return false;
     const session = answer.session || 1;
@@ -308,7 +359,8 @@ export async function saveStudentAnswerToFirestore(answer: any): Promise<boolean
       false
     );
     return Boolean(ok);
-  } catch {
+  } catch (err) {
+    handleFirestoreError(err, "saveStudentAnswer");
     return false;
   }
 }
@@ -338,6 +390,7 @@ export function canonicalizeAnswersMap(answers: any): Record<string, any> {
 }
 
 export async function saveActiveSessionsToFirestore(activeSessions: Record<string, number>): Promise<boolean> {
+  if (isQuotaExhausted()) return false;
   try {
     const ok = await withTimeout(
       setDoc(STATE_DOC_REF, {
@@ -349,7 +402,7 @@ export async function saveActiveSessionsToFirestore(activeSessions: Record<strin
     );
     return Boolean(ok);
   } catch (err) {
-    console.error("[Firestore] Error saving active sessions:", err);
+    handleFirestoreError(err, "saveActiveSessions");
     return false;
   }
 }
@@ -358,6 +411,7 @@ export async function saveStateToFirestore(
   state: any,
   options?: { includeFeedbacks?: boolean; includeStudentAnswers?: boolean }
 ): Promise<boolean> {
+  if (isQuotaExhausted()) return false;
   try {
     const cleanPayload: Record<string, any> = {
       classes: state.classes || [],
@@ -393,21 +447,27 @@ export async function saveStateToFirestore(
     );
     return Boolean(ok);
   } catch (err) {
-    console.error("[Firestore] Error saving state:", err);
+    handleFirestoreError(err, "saveState");
     return false;
   }
 }
 
 export function subscribeToFirestoreState(callback: (data: any) => void): () => void {
-  return onSnapshot(
-    STATE_DOC_REF,
-    (snap) => {
-      if (snap.exists()) {
-        callback(snap.data());
+  if (isQuotaExhausted()) return () => {};
+  try {
+    return onSnapshot(
+      STATE_DOC_REF,
+      (snap) => {
+        if (snap.exists()) {
+          callback(snap.data());
+        }
+      },
+      (err) => {
+        handleFirestoreError(err, "subscribeToFirestoreState");
       }
-    },
-    (err) => {
-      console.warn("[Firestore] Realtime snapshot error:", err);
-    }
-  );
+    );
+  } catch (err) {
+    handleFirestoreError(err, "subscribeToFirestoreStateAttach");
+    return () => {};
+  }
 }

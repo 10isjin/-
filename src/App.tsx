@@ -89,6 +89,60 @@ export function saveFeedbacksToVault(feedbacks: FeedbackItem[]) {
   }
 }
 
+// Local device-only pending retry queues (handles offline or quota-exceeded writes without blasting the database)
+export function getPendingFeedbacks(): FeedbackItem[] {
+  try {
+    const raw = localStorage.getItem('shootingstar_pending_feedbacks');
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function removePendingFeedback(id: string) {
+  try {
+    const curr = getPendingFeedbacks().filter(f => f.id !== id);
+    localStorage.setItem('shootingstar_pending_feedbacks', JSON.stringify(curr));
+  } catch {}
+}
+
+export function addPendingFeedback(feedback: FeedbackItem) {
+  try {
+    const curr = getPendingFeedbacks().filter(f => f.id !== feedback.id);
+    if (curr.length < 20) {
+      curr.push(feedback);
+      localStorage.setItem('shootingstar_pending_feedbacks', JSON.stringify(curr));
+    }
+  } catch {}
+}
+
+export function getPendingAnswers(): any[] {
+  try {
+    const raw = localStorage.getItem('shootingstar_pending_answers');
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function removePendingAnswer(key: string) {
+  try {
+    const curr = getPendingAnswers().filter(a => `${a.classId}_${a.studentId}_s${a.session}` !== key);
+    localStorage.setItem('shootingstar_pending_answers', JSON.stringify(curr));
+  } catch {}
+}
+
+export function addPendingAnswer(answer: any) {
+  try {
+    const key = `${answer.classId}_${answer.studentId}_s${answer.session}`;
+    const curr = getPendingAnswers().filter(a => `${a.classId}_${a.studentId}_s${a.session}` !== key);
+    if (curr.length < 10) {
+      curr.push(answer);
+      localStorage.setItem('shootingstar_pending_answers', JSON.stringify(curr));
+    }
+  } catch {}
+}
+
 // Bi-directional merge by ID: guarantees no feedback or star is EVER lost or overwritten by empty arrays
 export function mergeFeedbackArrays(
   existing: FeedbackItem[] = [],
@@ -516,35 +570,26 @@ export default function App() {
 
     fetchState(true);
 
-    // Background sync for recently authored local feedbacks & answers (last 48h) that may have been offline/unsynced
+    // Background retry ONLY for items specifically pending on this local device (0 writes if nothing pending)
     try {
-      const localVault = loadFeedbacksFromVault();
-      const recentFeedbacks = localVault.filter(f => f && f.id && f.timestamp && (Date.now() - f.timestamp < 172800000));
-      if (recentFeedbacks.length > 0 && recentFeedbacks.length <= 30) {
+      const pendingFb = getPendingFeedbacks();
+      if (pendingFb.length > 0) {
         setTimeout(() => {
-          recentFeedbacks.forEach(f => {
-            saveFeedbackToFirestore(f).catch(() => {});
+          pendingFb.forEach(async (f) => {
+            const ok = await saveFeedbackToFirestore(f);
+            if (ok) removePendingFeedback(f.id);
           });
-        }, 3500);
+        }, 4000);
       }
 
-      // Also sync any recent student answers created on this device
-      const localBackupStr = localStorage.getItem('shootingstar_full_backup');
-      if (localBackupStr) {
-        try {
-          const parsed = JSON.parse(localBackupStr);
-          if (parsed && parsed.studentAnswers && typeof parsed.studentAnswers === 'object') {
-            const answers = Object.values(parsed.studentAnswers) as any[];
-            const recentAnswers = answers.filter(a => a && a.studentId && a.answer && a.updatedAt && (Date.now() - a.updatedAt < 172800000));
-            if (recentAnswers.length > 0 && recentAnswers.length <= 10) {
-              setTimeout(() => {
-                recentAnswers.forEach(ans => {
-                  saveStudentAnswerToFirestore(ans).catch(() => {});
-                });
-              }, 4000);
-            }
-          }
-        } catch {}
+      const pendingAns = getPendingAnswers();
+      if (pendingAns.length > 0) {
+        setTimeout(() => {
+          pendingAns.forEach(async (ans) => {
+            const ok = await saveStudentAnswerToFirestore(ans);
+            if (ok) removePendingAnswer(`${ans.classId}_${ans.studentId}_s${ans.session}`);
+          });
+        }, 5000);
       }
     } catch {}
 
@@ -744,8 +789,11 @@ export default function App() {
 
     // 2. Direct Firestore persistence: isolated doc write to /feedbacks/{id}
     // Consumes only 1 single write and ZERO broadcast reads to other students!
-    saveFeedbackToFirestore(newFeedback).catch(err => {
-      console.warn('[Firestore] Error saving individual feedback doc:', err);
+    saveFeedbackToFirestore(newFeedback).then(ok => {
+      if (!ok) addPendingFeedback(newFeedback);
+      else removePendingFeedback(feedbackId);
+    }).catch(() => {
+      addPendingFeedback(newFeedback);
     });
 
     // 3. Post to backend server with exact feedback ID
@@ -1351,7 +1399,13 @@ export default function App() {
         ...prev,
         studentAnswers: cleanAnswers
       };
-      saveStudentAnswerToFirestore(newAnswer).catch(() => {});
+      const answerSessionKey = `${classId}_${studentId}_s${targetSession}`;
+      saveStudentAnswerToFirestore(newAnswer).then(ok => {
+        if (!ok) addPendingAnswer(newAnswer);
+        else removePendingAnswer(answerSessionKey);
+      }).catch(() => {
+        addPendingAnswer(newAnswer);
+      });
       try {
         localStorage.setItem('shootingstar_full_backup', JSON.stringify(nextState));
       } catch (e) {}
