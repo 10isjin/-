@@ -29,7 +29,10 @@ import {
   subscribeToFeedbacksCollection,
   clearFeedbacksInFirestore,
   canonicalizeAnswersMap,
-  syncVaultFeedbacksToFirestore
+  syncVaultFeedbacksToFirestore,
+  saveStudentAnswerToFirestore,
+  deleteFeedbackFromFirestore,
+  saveActiveSessionsToFirestore
 } from './lib/firebase';
 import { getDefaultAppState, getDefaultClasses, getDefaultStudents, getDefaultSessionQuestions } from './lib/defaultData';
 import { generateClientAiFeedback } from './lib/clientAiEvaluation';
@@ -46,7 +49,9 @@ export const TEST_PERIOD_CUTOFF = 1791126000000;
 // Strict filter: purge ANY synthetic / mock / AI-generated feedbacks or old test items
 export function isSyntheticOrTestFeedback(f: any): boolean {
   if (!f || !f.id) return true;
-  if (typeof f.id === 'string' && (f.id.startsWith('fb_3-8_') || f.id.startsWith('fb_3-9_'))) {
+  // All genuine feedbacks created during real classes strictly start with 'fb_179'
+  // Discard any synthetic mock feedbacks (such as fb_3-8_, fb_3-9_, fb_3-10_, or other test IDs)
+  if (typeof f.id === 'string' && (!f.id.startsWith('fb_179') || f.id.startsWith('fb_3-'))) {
     return true;
   }
   if (f.timestamp && f.timestamp < TEST_PERIOD_CUTOFF) {
@@ -511,16 +516,35 @@ export default function App() {
 
     fetchState(true);
 
-    // Background sync for recently authored local feedbacks (last 24h) that may have been offline/unsynced
+    // Background sync for recently authored local feedbacks & answers (last 48h) that may have been offline/unsynced
     try {
       const localVault = loadFeedbacksFromVault();
-      const recentFeedbacks = localVault.filter(f => f && f.id && f.timestamp && (Date.now() - f.timestamp < 86400000));
+      const recentFeedbacks = localVault.filter(f => f && f.id && f.timestamp && (Date.now() - f.timestamp < 172800000));
       if (recentFeedbacks.length > 0 && recentFeedbacks.length <= 30) {
         setTimeout(() => {
           recentFeedbacks.forEach(f => {
             saveFeedbackToFirestore(f).catch(() => {});
           });
         }, 3500);
+      }
+
+      // Also sync any recent student answers created on this device
+      const localBackupStr = localStorage.getItem('shootingstar_full_backup');
+      if (localBackupStr) {
+        try {
+          const parsed = JSON.parse(localBackupStr);
+          if (parsed && parsed.studentAnswers && typeof parsed.studentAnswers === 'object') {
+            const answers = Object.values(parsed.studentAnswers) as any[];
+            const recentAnswers = answers.filter(a => a && a.studentId && a.answer && a.updatedAt && (Date.now() - a.updatedAt < 172800000));
+            if (recentAnswers.length > 0 && recentAnswers.length <= 10) {
+              setTimeout(() => {
+                recentAnswers.forEach(ans => {
+                  saveStudentAnswerToFirestore(ans).catch(() => {});
+                });
+              }, 4000);
+            }
+          }
+        } catch {}
       }
     } catch {}
 
@@ -574,6 +598,20 @@ export default function App() {
       }
     });
 
+    // 2. Real-time stream for newly incoming individual feedbacks (ultra-lightweight: 0.3KB per new feedback!)
+    const unsubFeedbacks = subscribeToFeedbacksCollection((incomingItems) => {
+      if (Array.isArray(incomingItems) && incomingItems.length > 0) {
+        setAppState(prev => {
+          const merged = mergeFeedbackArrays(prev.feedbacks, incomingItems);
+          saveFeedbacksToVault(merged);
+          return {
+            ...prev,
+            feedbacks: merged
+          };
+        });
+      }
+    });
+
     // Throttled refresh when returning to tab (min 45 seconds between visibility checks)
     let lastVisibilityCheck = Date.now();
     const handleVisibility = () => {
@@ -588,6 +626,7 @@ export default function App() {
 
     return () => {
       unsubState();
+      unsubFeedbacks();
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
     };
@@ -703,8 +742,9 @@ export default function App() {
       return { ...prev, feedbacks: nextFeedbacks };
     });
 
-    // 2. Direct Firestore persistence + central state document broadcast (1 read per client!)
-    saveFeedbackToFirestore(newFeedback, updatedFeedbacksList).catch(err => {
+    // 2. Direct Firestore persistence: isolated doc write to /feedbacks/{id}
+    // Consumes only 1 single write and ZERO broadcast reads to other students!
+    saveFeedbackToFirestore(newFeedback).catch(err => {
       console.warn('[Firestore] Error saving individual feedback doc:', err);
     });
 
@@ -735,8 +775,8 @@ export default function App() {
       };
     });
 
-    // Direct Firestore individual doc update & central state broadcast
-    rewardFeedbackInFirestore(feedbackId, true, Date.now(), updatedList).catch(() => {});
+    // Direct Firestore individual doc update (isolated doc write - 1 write, 0 broadcast reads)
+    rewardFeedbackInFirestore(feedbackId, true, Date.now()).catch(() => {});
 
     try {
       fetch(`/api/feedback/${feedbackId}/reward`, {
@@ -765,8 +805,8 @@ export default function App() {
       return { ...prev, feedbacks: nextFeedbacks };
     });
 
-    // Direct Firestore individual doc update & central state broadcast
-    rewardFeedbackInFirestore(feedbackId, false, undefined, updatedList).catch(() => {});
+    // Direct Firestore individual doc update (isolated doc write - 1 write, 0 broadcast reads)
+    rewardFeedbackInFirestore(feedbackId, false, undefined).catch(() => {});
 
     try {
       fetch(`/api/feedback/${feedbackId}/cancel-reward`, {
@@ -1311,7 +1351,7 @@ export default function App() {
         ...prev,
         studentAnswers: cleanAnswers
       };
-      saveStateToFirestore(nextState).catch(() => {});
+      saveStudentAnswerToFirestore(newAnswer).catch(() => {});
       try {
         localStorage.setItem('shootingstar_full_backup', JSON.stringify(nextState));
       } catch (e) {}
@@ -1385,12 +1425,20 @@ export default function App() {
   // Handler: Delete single feedback
   const handleDeleteFeedback = async (id: string): Promise<boolean> => {
     setAppState(prev => {
+      const nextFeedbacks = prev.feedbacks.filter(f => f.id !== id);
+      saveFeedbacksToVault(nextFeedbacks);
       const nextState = {
         ...prev,
-        feedbacks: prev.feedbacks.filter(f => f.id !== id)
+        feedbacks: nextFeedbacks
       };
-      saveStateToFirestore(nextState).catch(() => {});
+      try {
+        localStorage.setItem('shootingstar_full_backup', JSON.stringify(nextState));
+      } catch (e) {}
       return nextState;
+    });
+
+    deleteFeedbackFromFirestore(id).catch(err => {
+      console.warn('[Firestore] Error deleting feedback doc:', err);
     });
 
     try {
@@ -1414,7 +1462,7 @@ export default function App() {
         ...prev,
         activeSessions: nextSessions
       };
-      saveStateToFirestore(nextState).catch(() => {});
+      saveActiveSessionsToFirestore(nextSessions).catch(() => {});
       try {
         localStorage.setItem('shootingstar_full_backup', JSON.stringify(nextState));
         localStorage.setItem('shootingstar_active_sessions', JSON.stringify(nextSessions));
@@ -1442,7 +1490,7 @@ export default function App() {
         nextSessions[cId] = session;
       });
       const nextState = { ...prev, activeSessions: nextSessions };
-      saveStateToFirestore(nextState).catch(() => {});
+      saveActiveSessionsToFirestore(nextSessions).catch(() => {});
       try {
         localStorage.setItem('shootingstar_full_backup', JSON.stringify(nextState));
         localStorage.setItem('shootingstar_active_sessions', JSON.stringify(nextSessions));

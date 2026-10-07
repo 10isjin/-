@@ -9,7 +9,10 @@ import {
   getDocs,
   writeBatch,
   onSnapshot,
-  getDocFromServer
+  getDocFromServer,
+  query,
+  orderBy,
+  limit
 } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 import { getDefaultSessionQuestions } from "./defaultData";
@@ -60,22 +63,18 @@ testFirestoreConnection();
  * Multiple students writing simultaneously can NEVER overwrite or collide with each other!
  */
 
-// Save or update a single feedback document permanently in Firestore
-export async function saveFeedbackToFirestore(feedback: FeedbackItem, allCurrentFeedbacks?: FeedbackItem[]): Promise<boolean> {
+// Save or update a single feedback document permanently in Firestore (Strictly isolated doc write, 0 broadcast reads)
+export async function saveFeedbackToFirestore(feedback: FeedbackItem): Promise<boolean> {
   try {
     if (!feedback || !feedback.id) return false;
     const cleanItem = JSON.parse(JSON.stringify(feedback));
     
-    // 1. Direct doc write to /feedbacks/{id} (isolated doc)
-    await setDoc(doc(db, "feedbacks", feedback.id), cleanItem, { merge: true }).catch(() => {});
-    
-    // 2. Also update central STATE_DOC_REF with the updated feedbacks array if provided (1 single write, triggers 1 read per client)
-    if (allCurrentFeedbacks && Array.isArray(allCurrentFeedbacks)) {
-      await setDoc(STATE_DOC_REF, {
-        feedbacks: allCurrentFeedbacks,
-        updatedAt: Date.now()
-      }, { merge: true }).catch(() => {});
-    }
+    // Direct doc write to /feedbacks/{id} (isolated doc)
+    await withTimeout(
+      setDoc(doc(db, "feedbacks", feedback.id), cleanItem, { merge: true }),
+      4000,
+      undefined
+    );
     return true;
   } catch (err) {
     console.error("[Firestore] Error saving individual feedback:", err);
@@ -83,12 +82,11 @@ export async function saveFeedbackToFirestore(feedback: FeedbackItem, allCurrent
   }
 }
 
-// Update star reward state on a single feedback document
+// Update star reward state on a single feedback document (Strictly isolated doc write, 0 broadcast reads)
 export async function rewardFeedbackInFirestore(
   feedbackId: string,
   favoriteRewarded: boolean,
-  favoriteRewardedAt?: number,
-  allCurrentFeedbacks?: FeedbackItem[]
+  favoriteRewardedAt?: number
 ): Promise<boolean> {
   try {
     const ref = doc(db, "feedbacks", feedbackId);
@@ -99,13 +97,11 @@ export async function rewardFeedbackInFirestore(
     if (favoriteRewardedAt) {
       updateData.favoriteRewardedAt = favoriteRewardedAt;
     }
-    await setDoc(ref, updateData, { merge: true }).catch(() => {});
-    if (allCurrentFeedbacks && Array.isArray(allCurrentFeedbacks)) {
-      await setDoc(STATE_DOC_REF, {
-        feedbacks: allCurrentFeedbacks,
-        updatedAt: Date.now()
-      }, { merge: true }).catch(() => {});
-    }
+    await withTimeout(
+      setDoc(ref, updateData, { merge: true }),
+      4000,
+      undefined
+    );
     return true;
   } catch (err) {
     console.error("[Firestore] Error updating feedback reward in Firestore:", err);
@@ -143,23 +139,33 @@ export async function fetchFeedbacksFromFirestore(): Promise<FeedbackItem[]> {
   }
 }
 
-// Real-time listener: listens to STATE_DOC_REF's feedbacks field
-// Consumes 1 read per client instead of 300 reads per connection, saving 99.7% of quota!
+// Real-time listener: listens to individual new/modified feedbacks in /feedbacks
+// Real-time stream captures newly submitted feedbacks and star updates for the entire class session
 export function subscribeToFeedbacksCollection(callback: (feedbacks: FeedbackItem[]) => void): () => void {
-  return onSnapshot(
-    STATE_DOC_REF,
-    (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data && Array.isArray(data.feedbacks)) {
-          callback(data.feedbacks as FeedbackItem[]);
+  try {
+    const q = query(FEEDBACKS_COLLECTION, orderBy('timestamp', 'desc'), limit(60));
+    return onSnapshot(
+      q,
+      (snap) => {
+        const items: FeedbackItem[] = [];
+        snap.docChanges().forEach((change) => {
+          if (change.type === 'added' || change.type === 'modified') {
+            const item = change.doc.data() as FeedbackItem;
+            if (item && item.id) items.push(item);
+          }
+        });
+        if (items.length > 0) {
+          callback(items);
         }
+      },
+      (err) => {
+        console.warn("[Firestore] Realtime individual feedbacks snapshot error:", err);
       }
-    },
-    (err) => {
-      console.warn("[Firestore] Realtime state feedbacks snapshot error:", err);
-    }
-  );
+    );
+  } catch (err) {
+    console.warn("[Firestore] Error attaching feedbacks query listener:", err);
+    return () => {};
+  }
 }
 
 // Batch push local vault feedbacks to Firestore to guarantee cloud sync across all devices
@@ -279,6 +285,34 @@ export async function fetchStateFromFirestore(): Promise<any | null> {
   return null;
 }
 
+export async function saveStudentAnswerToFirestore(answer: any): Promise<boolean> {
+  try {
+    if (!answer || !answer.classId || !answer.studentId || !answer.answer) return false;
+    const session = answer.session || 1;
+    const canonicalKey = `${answer.classId}_${answer.studentId}_s${session}`;
+    const cleanAnswer = {
+      ...answer,
+      id: `ans_${canonicalKey}`,
+      session,
+      updatedAt: answer.updatedAt || Date.now()
+    };
+    const payload = {
+      studentAnswers: {
+        [canonicalKey]: cleanAnswer
+      },
+      updatedAt: Date.now()
+    };
+    const ok = await withTimeout(
+      setDoc(STATE_DOC_REF, payload, { merge: true }).then(() => true),
+      4000,
+      false
+    );
+    return Boolean(ok);
+  } catch {
+    return false;
+  }
+}
+
 export function canonicalizeAnswersMap(answers: any): Record<string, any> {
   const result: Record<string, any> = {};
   if (!answers || typeof answers !== 'object') return result;
@@ -303,13 +337,31 @@ export function canonicalizeAnswersMap(answers: any): Record<string, any> {
   return result;
 }
 
-export async function saveStateToFirestore(state: any): Promise<boolean> {
+export async function saveActiveSessionsToFirestore(activeSessions: Record<string, number>): Promise<boolean> {
   try {
-    const cleanAnswers = canonicalizeAnswersMap(state.studentAnswers || {});
-    const cleanPayload = JSON.parse(JSON.stringify({
+    const ok = await withTimeout(
+      setDoc(STATE_DOC_REF, {
+        activeSessions,
+        updatedAt: Date.now()
+      }, { merge: true }).then(() => true),
+      4000,
+      false
+    );
+    return Boolean(ok);
+  } catch (err) {
+    console.error("[Firestore] Error saving active sessions:", err);
+    return false;
+  }
+}
+
+export async function saveStateToFirestore(
+  state: any,
+  options?: { includeFeedbacks?: boolean; includeStudentAnswers?: boolean }
+): Promise<boolean> {
+  try {
+    const cleanPayload: Record<string, any> = {
       classes: state.classes || [],
       students: state.students || [],
-      feedbacks: Array.isArray(state.feedbacks) ? state.feedbacks : [],
       aiEvaluations: state.aiEvaluations || {},
       teacherQuestions: state.teacherQuestions || {},
       classSessionQuestions: state.classSessionQuestions || {},
@@ -317,11 +369,23 @@ export async function saveStateToFirestore(state: any): Promise<boolean> {
         ...getDefaultSessionQuestions(),
         ...(state.sessionQuestions || {})
       },
-      studentAnswers: cleanAnswers,
       activeSessions: state.activeSessions || {},
       gameScores: state.gameScores || [],
       updatedAt: Date.now()
-    }));
+    };
+
+    // Feedbacks are stored independently in /feedbacks/{id} collection.
+    // NEVER overwrite the central state feedbacks unless explicitly requested (e.g. backup restore or manual sync).
+    if (options?.includeFeedbacks && Array.isArray(state.feedbacks)) {
+      cleanPayload.feedbacks = state.feedbacks;
+    }
+
+    // Student answers are stored per student via saveStudentAnswerToFirestore.
+    // Only synchronize the entire map if explicitly requested (e.g. initial import or manual purge).
+    if (options?.includeStudentAnswers && state.studentAnswers) {
+      cleanPayload.studentAnswers = canonicalizeAnswersMap(state.studentAnswers);
+    }
+
     const ok = await withTimeout(
       setDoc(STATE_DOC_REF, cleanPayload, { merge: true }).then(() => true),
       4000,

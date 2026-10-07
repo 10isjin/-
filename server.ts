@@ -165,6 +165,9 @@ function checkServerCleanBot(text: string): { isValid: boolean; message?: string
 
 function isRealServerFeedback(f: FeedbackItem): boolean {
   if (!f || !f.id || !f.performerId) return false;
+  if (typeof f.id === 'string' && (!f.id.startsWith('fb_179') || f.id.startsWith('fb_3-'))) {
+    return false;
+  }
   if (f.comment && !checkServerCleanBot(f.comment).isValid) {
     return false;
   }
