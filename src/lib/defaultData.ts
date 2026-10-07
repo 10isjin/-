@@ -1,4 +1,5 @@
 import { Classroom, Student, AppStateData, FeedbackItem } from '../types';
+import initialFeedbacksData from '../data/initialFeedbacks.json';
 
 export function getDefaultClasses(): Classroom[] {
   return [
@@ -2003,7 +2004,7 @@ export function getDefaultSessionQuestions(): Record<number, string> {
 }
 
 export function getDefaultFeedbacks(): FeedbackItem[] {
-  return [];
+  return (initialFeedbacksData as FeedbackItem[]) || [];
 }
 
 export function getDefaultActiveSessions(): Record<string, number> {
@@ -2015,8 +2016,8 @@ export function getDefaultActiveSessions(): Record<string, number> {
     '3-5': 1,
     '3-6': 1,
     '3-7': 1,
-    '3-8': 1,
-    '3-9': 1,
+    '3-8': 2,
+    '3-9': 2,
     '3-10': 1,
     '3-11': 1
   };
@@ -2026,7 +2027,7 @@ export function getDefaultAppState(): AppStateData {
   return {
     classes: getDefaultClasses(),
     students: getDefaultStudents(),
-    feedbacks: [],
+    feedbacks: getDefaultFeedbacks(),
     aiEvaluations: {},
     teacherQuestions: {},
     sessionQuestions: getDefaultSessionQuestions(),

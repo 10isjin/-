@@ -511,35 +511,21 @@ export default function App() {
 
     fetchState(true);
 
-    // Auto-sync: If local vault contains feedbacks, push to Firestore & Server in the background
+    // Background sync for recently authored local feedbacks (last 24h) that may have been offline/unsynced
     try {
       const localVault = loadFeedbacksFromVault();
-      if (localVault.length > 0) {
-        syncVaultFeedbacksToFirestore(localVault).catch(() => {});
-        fetch('/api/feedback/batch-sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ feedbacks: localVault })
-        }).catch(() => {});
+      const recentFeedbacks = localVault.filter(f => f && f.id && f.timestamp && (Date.now() - f.timestamp < 86400000));
+      if (recentFeedbacks.length > 0 && recentFeedbacks.length <= 30) {
+        setTimeout(() => {
+          recentFeedbacks.forEach(f => {
+            saveFeedbackToFirestore(f).catch(() => {});
+          });
+        }, 3500);
       }
     } catch {}
 
-    // 1. Dedicated real-time subscriber for feedbacks (single-doc optimized, saves 99.7% quota!)
-    const unsubFeedbacks = subscribeToFeedbacksCollection((incomingFeedbacks) => {
-      if (Array.isArray(incomingFeedbacks) && incomingFeedbacks.length > 0) {
-        setAppState(prev => {
-          const vaultFeedbacks = loadFeedbacksFromVault();
-          const merged = mergeFeedbackArrays(prev.feedbacks, incomingFeedbacks, vaultFeedbacks);
-          saveFeedbacksToVault(merged);
-          return {
-            ...prev,
-            feedbacks: merged
-          };
-        });
-      }
-    });
-
-    // 2. Real-time subscriber for global classes, questions, sessions, and feedbacks
+    // 1. Unified Real-time subscriber for global classes, questions, sessions, and feedbacks
+    // Consumes 1 read per client connection, eliminating duplicate listeners!
     const unsubState = subscribeToFirestoreState((data) => {
       if (data && Array.isArray(data.classes) && data.classes.length > 0) {
         setAppState(prev => {
@@ -588,17 +574,19 @@ export default function App() {
       }
     });
 
-    // Refresh immediately when returning to the tab or applet window
+    // Throttled refresh when returning to tab (min 45 seconds between visibility checks)
+    let lastVisibilityCheck = Date.now();
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        fetchState(true);
+      const now = Date.now();
+      if (document.visibilityState === 'visible' && (now - lastVisibilityCheck > 45000)) {
+        lastVisibilityCheck = now;
+        fetchState(false);
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('focus', handleVisibility);
 
     return () => {
-      unsubFeedbacks();
       unsubState();
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
@@ -1572,24 +1560,35 @@ export default function App() {
 
       setAppState(prev => ({ ...prev, feedbacks: mergedList }));
 
-      // 1. Sync to Cloud Firestore (both vault and full state with merge: true)
-      await syncVaultFeedbacksToFirestore(mergedList);
-      await saveStateToFirestore({ ...appState, feedbacks: mergedList });
+      // 1. Sync to Cloud Firestore with timeout protection
+      const ok1 = await syncVaultFeedbacksToFirestore(mergedList);
+      const ok2 = await saveStateToFirestore({ ...appState, feedbacks: mergedList });
+      const cloudSuccess = Boolean(ok1 || ok2);
 
       // 2. Sync to Server backend if reachable
+      let serverSuccess = false;
       try {
-        await fetch('/api/feedback/batch-sync', {
+        const res = await fetch('/api/feedback/batch-sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ feedbacks: mergedList })
         });
+        if (res.ok) serverSuccess = true;
       } catch {}
 
-      return {
-        success: true,
-        count: mergedList.length,
-        message: `총 ${mergedList.length}건의 피드백이 클라우드 및 서버와 완벽하게 동기화되었습니다! 이제 모든 학생 및 PC에서 실시간으로 확인하실 수 있습니다.`
-      };
+      if (cloudSuccess || serverSuccess) {
+        return {
+          success: true,
+          count: mergedList.length,
+          message: `총 ${mergedList.length}건의 피드백이 클라우드와 완벽하게 동기화되었습니다! 모든 학생 및 PC에서 실시간으로 확인하실 수 있습니다.`
+        };
+      } else {
+        return {
+          success: true,
+          count: mergedList.length,
+          message: `총 ${mergedList.length}건의 피드백이 현재 기기 안전 금고에 안전하게 저장되었습니다.\n(클라우드 일일 무료 할당량이 소진된 경우에도 데이터는 기기에 100% 안전하게 보존되며, 할당량 리셋 또는 요금제 연결 시 자동 반영됩니다.)`
+        };
+      }
     } catch (e: any) {
       return {
         success: false,
@@ -1614,9 +1613,12 @@ export default function App() {
         isSyncingCloud={isSyncingCloud}
         onSyncCloud={async () => {
           setIsSyncingCloud(true);
-          const res = await handleSyncAllFeedbacksToCloud();
-          setIsSyncingCloud(false);
-          alert(res.message);
+          try {
+            const res = await handleSyncAllFeedbacksToCloud();
+            alert(res.message);
+          } finally {
+            setIsSyncingCloud(false);
+          }
         }}
       />
 

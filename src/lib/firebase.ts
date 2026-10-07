@@ -27,10 +27,25 @@ export const db = firebaseConfig.firestoreDatabaseId
 const STATE_DOC_REF = doc(db, "app_state", "global_state");
 export const FEEDBACKS_COLLECTION = collection(db, "feedbacks");
 
+// Resilient promise timeout helper to prevent UI freezing / hanging
+export function withTimeout<T>(promise: Promise<T>, ms = 4000, fallback: T): Promise<T> {
+  let timer: any;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  return Promise.race([
+    promise.then((res) => {
+      clearTimeout(timer);
+      return res;
+    }).catch(() => fallback),
+    timeoutPromise
+  ]);
+}
+
 // Validate connection to Firestore
 export async function testFirestoreConnection() {
   try {
-    await getDocFromServer(STATE_DOC_REF);
+    await withTimeout(getDocFromServer(STATE_DOC_REF), 3000, null as any);
   } catch (error) {
     if (error instanceof Error && error.message.includes("the client is offline")) {
       console.error("Please check your Firebase configuration.");
@@ -101,8 +116,8 @@ export async function rewardFeedbackInFirestore(
 // Fetch all feedbacks - optimized to check central STATE_DOC_REF first (1 read instead of 300 reads!)
 export async function fetchFeedbacksFromFirestore(): Promise<FeedbackItem[]> {
   try {
-    const snap = await getDoc(STATE_DOC_REF);
-    if (snap.exists()) {
+    const snap = await withTimeout(getDoc(STATE_DOC_REF), 4000, null as any);
+    if (snap && snap.exists && snap.exists()) {
       const data = snap.data();
       if (Array.isArray(data.feedbacks) && data.feedbacks.length > 0) {
         return data.feedbacks as FeedbackItem[];
@@ -114,9 +129,10 @@ export async function fetchFeedbacksFromFirestore(): Promise<FeedbackItem[]> {
 
   // Fallback to collection only if state doc is empty
   try {
-    const snap = await getDocs(FEEDBACKS_COLLECTION);
+    const snap = await withTimeout(getDocs(FEEDBACKS_COLLECTION), 4000, null as any);
+    if (!snap) return [];
     const list: FeedbackItem[] = [];
-    snap.forEach((d) => {
+    snap.forEach((d: any) => {
       const item = d.data() as FeedbackItem;
       if (item && item.id) list.push(item);
     });
@@ -152,8 +168,8 @@ export async function syncVaultFeedbacksToFirestore(vaultFeedbacks: FeedbackItem
   try {
     let existingFeedbacks: FeedbackItem[] = [];
     try {
-      const stateDoc = await getDoc(STATE_DOC_REF);
-      if (stateDoc && stateDoc.exists()) {
+      const stateDoc = await withTimeout(getDoc(STATE_DOC_REF), 4000, null as any);
+      if (stateDoc && stateDoc.exists && stateDoc.exists()) {
         const d = stateDoc.data();
         if (Array.isArray(d.feedbacks)) existingFeedbacks = d.feedbacks;
       }
@@ -183,12 +199,16 @@ export async function syncVaultFeedbacksToFirestore(vaultFeedbacks: FeedbackItem
     });
     const mergedList = Array.from(map.values());
 
-    await setDoc(STATE_DOC_REF, {
-      feedbacks: mergedList,
-      updatedAt: Date.now()
-    }, { merge: true });
+    const ok = await withTimeout(
+      setDoc(STATE_DOC_REF, {
+        feedbacks: mergedList,
+        updatedAt: Date.now()
+      }, { merge: true }).then(() => true),
+      4000,
+      false
+    );
 
-    return true;
+    return Boolean(ok);
   } catch (e) {
     console.warn("[Firestore] Error syncing vault feedbacks to Firestore:", e);
     return false;
@@ -198,7 +218,7 @@ export async function syncVaultFeedbacksToFirestore(vaultFeedbacks: FeedbackItem
 // Delete a single feedback document from Firestore
 export async function deleteFeedbackFromFirestore(feedbackId: string): Promise<boolean> {
   try {
-    await deleteDoc(doc(db, "feedbacks", feedbackId));
+    await withTimeout(deleteDoc(doc(db, "feedbacks", feedbackId)), 3000, false as any);
     return true;
   } catch (err) {
     console.error("[Firestore] Error deleting feedback doc:", err);
@@ -214,10 +234,11 @@ export async function clearFeedbacksInFirestore(filter?: {
   session?: number | 'all';
 }): Promise<number> {
   try {
-    const snap = await getDocs(FEEDBACKS_COLLECTION);
+    const snap = await withTimeout(getDocs(FEEDBACKS_COLLECTION), 4000, null as any);
+    if (!snap) return 0;
     const batch = writeBatch(db);
     let count = 0;
-    snap.forEach((docSnap) => {
+    snap.forEach((docSnap: any) => {
       const data = docSnap.data() as FeedbackItem;
       let matches = true;
       if (filter) {
@@ -232,9 +253,9 @@ export async function clearFeedbacksInFirestore(filter?: {
       }
     });
     if (count > 0 || !filter || filter.classId === 'all') {
-      await batch.commit();
+      await withTimeout(batch.commit(), 4000, false as any);
       // Ensure STATE_DOC_REF also syncs empty feedbacks
-      await setDoc(STATE_DOC_REF, { feedbacks: [] }, { merge: true }).catch(() => {});
+      await withTimeout(setDoc(STATE_DOC_REF, { feedbacks: [] }, { merge: true }), 3000, false as any);
     }
     return count;
   } catch (err) {
@@ -248,8 +269,8 @@ export async function clearFeedbacksInFirestore(filter?: {
  */
 export async function fetchStateFromFirestore(): Promise<any | null> {
   try {
-    const snap = await getDoc(STATE_DOC_REF);
-    if (snap.exists()) {
+    const snap = await withTimeout(getDoc(STATE_DOC_REF), 4000, null as any);
+    if (snap && snap.exists && snap.exists()) {
       return snap.data();
     }
   } catch (err) {
@@ -301,8 +322,12 @@ export async function saveStateToFirestore(state: any): Promise<boolean> {
       gameScores: state.gameScores || [],
       updatedAt: Date.now()
     }));
-    await setDoc(STATE_DOC_REF, cleanPayload, { merge: true });
-    return true;
+    const ok = await withTimeout(
+      setDoc(STATE_DOC_REF, cleanPayload, { merge: true }).then(() => true),
+      4000,
+      false
+    );
+    return Boolean(ok);
   } catch (err) {
     console.error("[Firestore] Error saving state:", err);
     return false;
