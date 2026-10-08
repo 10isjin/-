@@ -19,6 +19,7 @@ import { ObserverMode } from './components/ObserverMode';
 import { OverviewMode } from './components/OverviewMode';
 import { TeacherMode } from './components/TeacherMode';
 import { QrShareModal } from './components/QrShareModal';
+import { BrowserGuideModal } from './components/BrowserGuideModal';
 import {
   saveStateToFirestore,
   fetchStateFromFirestore,
@@ -32,7 +33,9 @@ import {
   syncVaultFeedbacksToFirestore,
   saveStudentAnswerToFirestore,
   deleteFeedbackFromFirestore,
-  saveActiveSessionsToFirestore
+  saveActiveSessionsToFirestore,
+  onQuotaStateChange,
+  isQuotaExhausted
 } from './lib/firebase';
 import { getDefaultAppState, getDefaultClasses, getDefaultStudents, getDefaultSessionQuestions } from './lib/defaultData';
 import { generateClientAiFeedback } from './lib/clientAiEvaluation';
@@ -283,6 +286,15 @@ export default function App() {
     const ua = navigator.userAgent.toLowerCase();
     return ua.includes('kakaotalk') || ua.includes('naver') || ua.includes('line') || ua.includes('instagram') || ua.includes('daumapps') || ua.includes('fbav');
   });
+  const [isBrowserGuideOpen, setIsBrowserGuideOpen] = useState<boolean>(false);
+  const [isCloudQuotaExhausted, setIsCloudQuotaExhausted] = useState<boolean>(() => isQuotaExhausted());
+
+  useEffect(() => {
+    const unsub = onQuotaStateChange((exhausted) => {
+      setIsCloudQuotaExhausted(exhausted);
+    });
+    return () => unsub();
+  }, []);
 
   const handleOpenExternalBrowser = () => {
     const currentUrl = window.location.href;
@@ -291,10 +303,14 @@ export default function App() {
 
     if (isAndroid) {
       const cleanUrl = currentUrl.replace(/https?:\/\//, '');
+      // Try opening Chrome directly via Android intent
       window.location.href = `intent://${cleanUrl}#Intent;scheme=https;package=com.android.chrome;end`;
+      // Open guide modal as fallback after small delay if still on page
+      setTimeout(() => {
+        setIsBrowserGuideOpen(true);
+      }, 500);
     } else {
-      // iOS / other mobile guidance
-      alert('화면 우측 하단의 [···] 또는 [공유] 버튼을 누르고 [Safari로 열기] 또는 [기본 브라우저로 열기]를 선택해주세요!');
+      setIsBrowserGuideOpen(true);
     }
   };
 
@@ -572,24 +588,28 @@ export default function App() {
 
     // Background retry ONLY for items specifically pending on this local device (0 writes if nothing pending)
     try {
-      const pendingFb = getPendingFeedbacks();
-      if (pendingFb.length > 0) {
-        setTimeout(() => {
-          pendingFb.forEach(async (f) => {
-            const ok = await saveFeedbackToFirestore(f);
-            if (ok) removePendingFeedback(f.id);
-          });
-        }, 4000);
-      }
+      if (!isQuotaExhausted()) {
+        const pendingFb = getPendingFeedbacks();
+        if (pendingFb.length > 0) {
+          setTimeout(() => {
+            if (isQuotaExhausted()) return;
+            pendingFb.forEach(async (f) => {
+              const ok = await saveFeedbackToFirestore(f);
+              if (ok) removePendingFeedback(f.id);
+            });
+          }, 4000);
+        }
 
-      const pendingAns = getPendingAnswers();
-      if (pendingAns.length > 0) {
-        setTimeout(() => {
-          pendingAns.forEach(async (ans) => {
-            const ok = await saveStudentAnswerToFirestore(ans);
-            if (ok) removePendingAnswer(`${ans.classId}_${ans.studentId}_s${ans.session}`);
-          });
-        }, 5000);
+        const pendingAns = getPendingAnswers();
+        if (pendingAns.length > 0) {
+          setTimeout(() => {
+            if (isQuotaExhausted()) return;
+            pendingAns.forEach(async (ans) => {
+              const ok = await saveStudentAnswerToFirestore(ans);
+              if (ok) removePendingAnswer(`${ans.classId}_${ans.studentId}_s${ans.session}`);
+            });
+          }, 5000);
+        }
       }
     } catch {}
 
@@ -1730,13 +1750,19 @@ export default function App() {
         onClose={() => setIsQrModalOpen(false)}
       />
 
+      {/* Browser Guide Modal for Samsung / Android & iOS */}
+      <BrowserGuideModal
+        isOpen={isBrowserGuideOpen}
+        onClose={() => setIsBrowserGuideOpen(false)}
+      />
+
       {/* In-app Browser Notice Banner (KakaoTalk / Naver / Instagram QR access helper) */}
       {showInAppAlert && (
         <div className="bg-gradient-to-r from-amber-400 via-amber-300 to-amber-400 text-slate-950 px-4 py-2 text-xs font-bold flex flex-wrap items-center justify-between gap-2 z-30 shadow-md border-b border-amber-500/40">
           <div className="flex items-center gap-2">
             <span className="text-base">📱</span>
             <span>
-              카카오톡/네이버 인앱 브라우저로 접속 중입니다. 동영상 촬영과 안정적인 저장을 위해 <strong>Chrome/Safari</strong> 사용을 권장합니다.
+              카카오톡/네이버 인앱 브라우저로 접속 중입니다. 원활한 이용을 위해 <strong>Chrome · 삼성인터넷 · Safari</strong> 사용을 권장합니다.
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -1746,7 +1772,7 @@ export default function App() {
               className="px-2.5 py-1 rounded-lg bg-slate-950 text-amber-300 text-[11px] font-black cursor-pointer hover:bg-slate-800 transition-all flex items-center gap-1 shadow-sm"
             >
               <ExternalLink className="w-3 h-3" />
-              외부 브라우저로 열기
+              기본 브라우저(크롬/삼성/사파리)로 열기
             </button>
             <button
               type="button"
@@ -1756,6 +1782,18 @@ export default function App() {
             >
               ✕
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Cloud Quota Status Notice Banner */}
+      {isCloudQuotaExhausted && (
+        <div className="bg-gradient-to-r from-rose-950 via-rose-900 to-rose-950 border-b border-rose-800 text-rose-200 px-4 py-2 text-xs flex items-center justify-between gap-2 z-30 shadow-md">
+          <div className="flex items-center gap-2">
+            <span className="text-base shrink-0">⚠️</span>
+            <span>
+              <strong>구글 클라우드 일일 쓰기 한도 도달 안내:</strong> 데이터베이스 무료 일일 허용량(20,000건)이 초과되어 신규 작성이 일시 대기 중입니다. 기존 {appState.feedbacks.length}건 데이터는 안전하게 보존되어 있으며, 클라우드 리셋(오후 4시) 또는 요금제 업그레이드 시 자동으로 정상 동기화됩니다.
+            </span>
           </div>
         </div>
       )}

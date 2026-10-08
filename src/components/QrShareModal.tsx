@@ -131,7 +131,7 @@ export const QrShareModal: React.FC<Props> = ({ isOpen, onClose }) => {
           </div>
           <div className="flex items-start gap-1.5 text-slate-400">
             <span className="text-slate-500">•</span>
-            <span>카카오톡/네이버 인앱브라우저보다는 <strong>Chrome</strong> 또는 <strong>Safari</strong> 브라우저 접속을 권장합니다.</span>
+            <span>카카오톡/네이버 인앱 브라우저보다는 <strong>Chrome(크롬)</strong>, <strong>삼성 인터넷</strong>, <strong>Safari</strong> 브라우저 접속을 권장합니다.</span>
           </div>
         </div>
 

@@ -43,13 +43,30 @@ export const FEEDBACKS_COLLECTION = collection(db, "feedbacks");
 let isFirestoreQuotaExhausted = false;
 let quotaExhaustedResetTime = 0;
 
+type QuotaListener = (exhausted: boolean) => void;
+const quotaListeners: Set<QuotaListener> = new Set();
+
+export function onQuotaStateChange(listener: QuotaListener): () => void {
+  quotaListeners.add(listener);
+  listener(isFirestoreQuotaExhausted);
+  return () => {
+    quotaListeners.delete(listener);
+  };
+}
+
+function notifyQuotaListeners(exhausted: boolean) {
+  quotaListeners.forEach(listener => {
+    try {
+      listener(exhausted);
+    } catch {}
+  });
+}
+
 export function isQuotaExhausted(): boolean {
   if (!isFirestoreQuotaExhausted) return false;
   if (Date.now() > quotaExhaustedResetTime) {
     isFirestoreQuotaExhausted = false;
-    try {
-      enableNetwork(db).catch(() => {});
-    } catch {}
+    notifyQuotaListeners(false);
     return false;
   }
   return true;
@@ -68,13 +85,11 @@ export function handleFirestoreError(err: any, operationName = "operation") {
 
   if (isQuota) {
     if (!isFirestoreQuotaExhausted) {
-      console.warn(`[Firestore] Free daily quota limit reached during ${operationName}. Gracefully switching to server/local storage.`);
+      console.warn(`[Firestore] Free daily quota limit reached during ${operationName}. Read-only mode active until reset.`);
       isFirestoreQuotaExhausted = true;
-      // Cool down for 30 minutes before re-checking
-      quotaExhaustedResetTime = Date.now() + 30 * 60 * 1000;
-      try {
-        disableNetwork(db).catch(() => {});
-      } catch {}
+      // Cool down for 15 minutes before re-checking writes
+      quotaExhaustedResetTime = Date.now() + 15 * 60 * 1000;
+      notifyQuotaListeners(true);
     }
     return;
   }

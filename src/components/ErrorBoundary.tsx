@@ -99,7 +99,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 <span>카카오톡 / 네이버 / 알림장 앱 접속 시 안내</span>
               </div>
               <p className="text-[11px] text-slate-400 leading-relaxed">
-                스마트폰 앱 내부에서 링크를 열었을 경우 쿠키가 차단되어 빈 화면이 뜰 수 있습니다. 화면 우측 상단이나 하단의 메뉴(<strong className="text-slate-200">···</strong> 또는 <strong className="text-slate-200">⋮</strong>)를 눌러 <strong className="text-amber-300">[Safari로 열기]</strong> 또는 <strong className="text-amber-300">[Chrome으로 열기]</strong>를 선택해보세요.
+                스마트폰 앱 내부에서 링크를 열었을 경우 쿠키가 차단되어 빈 화면이 뜰 수 있습니다. 화면 우측 상단이나 하단의 메뉴(<strong className="text-slate-200">···</strong> 또는 <strong className="text-slate-200">⋮</strong>)를 눌러 <strong className="text-amber-300">[다른 브라우저로 열기]</strong>, <strong className="text-amber-300">[Chrome으로 열기]</strong>, 또는 <strong className="text-amber-300">[Safari로 열기]</strong>를 선택해보세요.
               </p>
             </div>
 
