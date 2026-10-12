@@ -726,6 +726,9 @@ app.post("/api/classes/:classId/students/:studentId/answer", (req, res) => {
   };
 
   saveState(appState);
+  try {
+    setDoc(doc(firestoreDb, "student_answers", answerKey), cleanForFirestore(appState.studentAnswers[answerKey]), { merge: true }).catch(() => {});
+  } catch {}
 
   res.json({
     success: true,

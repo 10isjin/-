@@ -28,6 +28,7 @@ import {
   rewardFeedbackInFirestore,
   fetchFeedbacksFromFirestore,
   subscribeToFeedbacksCollection,
+  subscribeToStudentAnswersCollection,
   clearFeedbacksInFirestore,
   canonicalizeAnswersMap,
   syncVaultFeedbacksToFirestore,
@@ -677,6 +678,22 @@ export default function App() {
       }
     });
 
+    // 3. Real-time stream for incoming student answers (isolated docs, zero contention!)
+    const unsubAnswers = subscribeToStudentAnswersCollection((incomingAnswers) => {
+      if (incomingAnswers && Object.keys(incomingAnswers).length > 0) {
+        setAppState(prev => {
+          const merged = canonicalizeAnswersMap({
+            ...(prev.studentAnswers || {}),
+            ...incomingAnswers
+          });
+          return {
+            ...prev,
+            studentAnswers: merged
+          };
+        });
+      }
+    });
+
     // Throttled refresh when returning to tab (min 45 seconds between visibility checks)
     let lastVisibilityCheck = Date.now();
     const handleVisibility = () => {
@@ -692,6 +709,7 @@ export default function App() {
     return () => {
       unsubState();
       unsubFeedbacks();
+      unsubAnswers();
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
     };
@@ -1419,17 +1437,19 @@ export default function App() {
         ...prev,
         studentAnswers: cleanAnswers
       };
-      const answerSessionKey = `${classId}_${studentId}_s${targetSession}`;
-      saveStudentAnswerToFirestore(newAnswer).then(ok => {
-        if (!ok) addPendingAnswer(newAnswer);
-        else removePendingAnswer(answerSessionKey);
-      }).catch(() => {
-        addPendingAnswer(newAnswer);
-      });
       try {
         localStorage.setItem('shootingstar_full_backup', JSON.stringify(nextState));
       } catch (e) {}
       return nextState;
+    });
+
+    // 1. Direct Firestore persistence: isolated doc write to /student_answers/{canonicalKey}
+    const answerSessionKey = `${classId}_${studentId}_s${targetSession}`;
+    saveStudentAnswerToFirestore(newAnswer).then(ok => {
+      if (!ok) addPendingAnswer(newAnswer);
+      else removePendingAnswer(answerSessionKey);
+    }).catch(() => {
+      addPendingAnswer(newAnswer);
     });
 
     try {

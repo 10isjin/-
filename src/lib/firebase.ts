@@ -37,6 +37,7 @@ export const db = firebaseConfig.firestoreDatabaseId
 // Primary document & collection references
 const STATE_DOC_REF = doc(db, "app_state", "global_state");
 export const FEEDBACKS_COLLECTION = collection(db, "feedbacks");
+export const STUDENT_ANSWERS_COLLECTION = collection(db, "student_answers");
 
 // Quota Circuit Breaker: If Firestore hits daily free tier write/read quota,
 // pause cloud Firestore write attempts to prevent console error storms and SDK retry loops.
@@ -74,26 +75,37 @@ export function isQuotaExhausted(): boolean {
 
 export function handleFirestoreError(err: any, operationName = "operation") {
   if (!err) return;
-  const isQuota =
-    err?.code === "resource-exhausted" ||
-    (typeof err?.message === "string" && (
-      err.message.includes("resource-exhausted") ||
-      err.message.includes("Quota limit exceeded") ||
-      err.message.includes("RESOURCE_EXHAUSTED") ||
-      err.message.includes("Quota exceeded")
-    ));
+  const errMsg = typeof err?.message === "string" ? err.message : "";
+  const errCode = err?.code || "";
 
-  if (isQuota) {
+  // True daily project quota exhaustion has specific cause or phrasing from Google Cloud
+  const isDailyProjectQuota =
+    errMsg.includes("Free daily write units per project") ||
+    errMsg.includes("Free daily read units per project") ||
+    errMsg.includes("per day' of service 'firestore.googleapis.com'") ||
+    errMsg.includes("Quota exceeded for quota metric 'Free daily");
+
+  // Document-level rate limit contention (1 write/sec per doc) or transient throttle
+  const isDocRateContention =
+    !isDailyProjectQuota &&
+    (errCode === "resource-exhausted" || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("resource-exhausted"));
+
+  if (isDailyProjectQuota) {
     if (!isFirestoreQuotaExhausted) {
-      console.warn(`[Firestore] Free daily quota limit reached during ${operationName}. Read-only mode active until reset.`);
+      console.warn(`[Firestore] Daily project quota reached during ${operationName}.`);
       isFirestoreQuotaExhausted = true;
-      // Cool down for 15 minutes before re-checking writes
-      quotaExhaustedResetTime = Date.now() + 15 * 60 * 1000;
+      quotaExhaustedResetTime = Date.now() + 10 * 60 * 1000;
       notifyQuotaListeners(true);
     }
     return;
   }
-  console.warn(`[Firestore] ${operationName} error:`, err?.message || err);
+
+  if (isDocRateContention) {
+    console.warn(`[Firestore] Transient document rate contention during ${operationName}. Handled safely without locking app.`);
+    return;
+  }
+
+  console.warn(`[Firestore] ${operationName} error:`, errMsg || err);
 }
 
 // Resilient promise timeout helper to prevent UI freezing / hanging
@@ -362,14 +374,11 @@ export async function saveStudentAnswerToFirestore(answer: any): Promise<boolean
       session,
       updatedAt: answer.updatedAt || Date.now()
     };
-    const payload = {
-      studentAnswers: {
-        [canonicalKey]: cleanAnswer
-      },
-      updatedAt: Date.now()
-    };
+    
+    // Direct isolated doc write to /student_answers/{canonicalKey}
+    // Completely eliminates central state doc write contention!
     const ok = await withTimeout(
-      setDoc(STATE_DOC_REF, payload, { merge: true }).then(() => true),
+      setDoc(doc(db, "student_answers", canonicalKey), cleanAnswer, { merge: true }).then(() => true),
       4000,
       false
     );
@@ -377,6 +386,36 @@ export async function saveStudentAnswerToFirestore(answer: any): Promise<boolean
   } catch (err) {
     handleFirestoreError(err, "saveStudentAnswer");
     return false;
+  }
+}
+
+// Real-time listener for student answers collection
+export function subscribeToStudentAnswersCollection(callback: (answers: Record<string, any>) => void): () => void {
+  if (isQuotaExhausted()) return () => {};
+  try {
+    return onSnapshot(
+      STUDENT_ANSWERS_COLLECTION,
+      (snap) => {
+        const answersMap: Record<string, any> = {};
+        snap.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data && data.classId && data.studentId) {
+            const sess = data.session || 1;
+            const key = `${data.classId}_${data.studentId}_s${sess}`;
+            answersMap[key] = data;
+          }
+        });
+        if (Object.keys(answersMap).length > 0) {
+          callback(answersMap);
+        }
+      },
+      (err) => {
+        handleFirestoreError(err, "studentAnswersListener");
+      }
+    );
+  } catch (err) {
+    handleFirestoreError(err, "subscribeToStudentAnswersCollection");
+    return () => {};
   }
 }
 
