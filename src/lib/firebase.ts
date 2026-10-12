@@ -15,7 +15,8 @@ import {
   limit,
   disableNetwork,
   enableNetwork,
-  setLogLevel
+  setLogLevel,
+  arrayUnion
 } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 import { getDefaultSessionQuestions } from "./defaultData";
@@ -94,7 +95,7 @@ export function handleFirestoreError(err: any, operationName = "operation") {
     if (!isFirestoreQuotaExhausted) {
       console.warn(`[Firestore] Daily project quota reached during ${operationName}.`);
       isFirestoreQuotaExhausted = true;
-      quotaExhaustedResetTime = Date.now() + 10 * 60 * 1000;
+      quotaExhaustedResetTime = Date.now() + 10 * 1000;
       notifyQuotaListeners(true);
     }
     return;
@@ -132,7 +133,9 @@ export function withTimeout<T>(promise: Promise<T>, ms = 4000, fallback: T): Pro
  * Multiple students writing simultaneously can NEVER overwrite or collide with each other!
  */
 
-// Save or update a single feedback document permanently in Firestore (Strictly isolated doc write, 0 broadcast reads)
+// Save or update a single feedback document permanently in Firestore
+// 1) Saves isolated doc to /feedbacks/{id}
+// 2) Atomically appends to central STATE_DOC_REF so ALL students and teacher devices receive real-time sync instantly!
 export async function saveFeedbackToFirestore(feedback: FeedbackItem): Promise<boolean> {
   if (isQuotaExhausted()) return false;
   try {
@@ -142,9 +145,20 @@ export async function saveFeedbackToFirestore(feedback: FeedbackItem): Promise<b
     // Direct doc write to /feedbacks/{id} (isolated doc)
     await withTimeout(
       setDoc(doc(db, "feedbacks", feedback.id), cleanItem, { merge: true }),
-      4000,
+      8000,
       undefined
     );
+
+    // Atomically append to STATE_DOC_REF so all real-time connected clients see it instantly!
+    withTimeout(
+      setDoc(STATE_DOC_REF, {
+        feedbacks: arrayUnion(cleanItem),
+        updatedAt: Date.now()
+      }, { merge: true }),
+      8000,
+      undefined
+    ).catch(() => {});
+
     return true;
   } catch (err) {
     handleFirestoreError(err, "saveFeedback");
@@ -451,7 +465,7 @@ export async function saveActiveSessionsToFirestore(activeSessions: Record<strin
         activeSessions,
         updatedAt: Date.now()
       }, { merge: true }).then(() => true),
-      4000,
+      8000,
       false
     );
     return Boolean(ok);

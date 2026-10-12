@@ -470,23 +470,20 @@ export default function App() {
           setAppState(prev => {
             const vaultFeedbacks = loadFeedbacksFromVault();
             const currentFeedbacks = Array.isArray(firestoreData.feedbacks) && firestoreData.feedbacks.length > 0
-              ? mergeFeedbackArrays(prev.feedbacks, firestoreData.feedbacks, vaultFeedbacks)
+              ? mergeFeedbackArrays(firestoreData.feedbacks, vaultFeedbacks)
               : (prev.feedbacks.length > 0 ? prev.feedbacks : vaultFeedbacks);
             saveFeedbacksToVault(currentFeedbacks);
             const mergedTeacherQuestions = {
-              ...(prev.teacherQuestions || {}),
               ...(firestoreData.teacherQuestions || {})
             };
             const mergedSessionQuestions = {
-              ...(prev.sessionQuestions || {}),
               ...(firestoreData.sessionQuestions || {})
             };
             const mergedClassSessionQuestions = {
-              ...(prev.classSessionQuestions || {}),
               ...(firestoreData.classSessionQuestions || {})
             };
+            // Central Firestore is the authoritative source for class sessions!
             const mergedActiveSessions = {
-              ...(prev.activeSessions || {}),
               ...(firestoreData.activeSessions || {})
             };
             const mergedData = {
@@ -621,24 +618,22 @@ export default function App() {
         setAppState(prev => {
           const currentStudents = Array.isArray(data.students) && data.students.length > 0 ? data.students : prev.students;
           const mergedTeacherQuestions = {
-            ...(prev.teacherQuestions || {}),
             ...(data.teacherQuestions || {})
           };
           const mergedSessionQuestions = {
-            ...(prev.sessionQuestions || {}),
             ...(data.sessionQuestions || {})
           };
           const mergedClassSessionQuestions = {
-            ...(prev.classSessionQuestions || {}),
             ...(data.classSessionQuestions || {})
           };
+          // Central Firestore is the authoritative source for class sessions!
           const mergedActiveSessions = {
-            ...(prev.activeSessions || {}),
             ...(data.activeSessions || {})
           };
           const vaultFeedbacks = loadFeedbacksFromVault();
           const incomingFeedbacks = Array.isArray(data.feedbacks) && data.feedbacks.length > 0 ? data.feedbacks : [];
-          const mergedFeedbacks = mergeFeedbackArrays(prev.feedbacks, incomingFeedbacks, vaultFeedbacks);
+          // Central Firestore is the base truth; merge with any local pending
+          const mergedFeedbacks = mergeFeedbackArrays(incomingFeedbacks, vaultFeedbacks);
           saveFeedbacksToVault(mergedFeedbacks);
 
           const next = {
