@@ -35,6 +35,7 @@ import {
   saveStudentAnswerToFirestore,
   deleteFeedbackFromFirestore,
   saveActiveSessionsToFirestore,
+  saveAiEvaluationToFirestore,
   onQuotaStateChange,
   isQuotaExhausted
 } from './lib/firebase';
@@ -507,6 +508,18 @@ export default function App() {
             return mergedData;
           });
           loadedFromServer = true;
+
+          // Asynchronously query FEEDBACKS_COLLECTION to ensure 100% complete all-time historical feedbacks
+          fetchFeedbacksFromFirestore().then(colFeedbacks => {
+            if (Array.isArray(colFeedbacks) && colFeedbacks.length > 0) {
+              setAppState(prev => {
+                const vault = loadFeedbacksFromVault();
+                const fullyMerged = mergeFeedbackArrays(colFeedbacks, prev.feedbacks, vault);
+                saveFeedbacksToVault(fullyMerged);
+                return { ...prev, feedbacks: fullyMerged };
+              });
+            }
+          }).catch(() => {});
         } else {
           // If Firestore is empty or quota exceeded, DO NOT WIPE STATE! Keep all existing feedbacks and students intact!
           console.warn('[ShootingStar] Firestore fetch returned empty or failed. Preserving existing client state.');
@@ -693,9 +706,9 @@ export default function App() {
     let lastVisibilityCheck = Date.now();
     const handleVisibility = () => {
       const now = Date.now();
-      if (document.visibilityState === 'visible' && (now - lastVisibilityCheck > 45000)) {
+      if (document.visibilityState === 'visible' && (now - lastVisibilityCheck > 10000)) {
         lastVisibilityCheck = now;
-        fetchState(false);
+        fetchState(true);
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
@@ -918,13 +931,12 @@ export default function App() {
           const evalData: AiEvaluation = data.evaluation;
           const cacheKey = `${performerId}_${shotType}`;
           setAppState(prev => {
-            const nextState = {
+            return {
               ...prev,
               aiEvaluations: { ...prev.aiEvaluations, [cacheKey]: evalData }
             };
-            saveStateToFirestore(nextState).catch(() => {});
-            return nextState;
           });
+          saveAiEvaluationToFirestore(cacheKey, evalData).catch(() => {});
           return evalData;
         }
       }
@@ -940,13 +952,12 @@ export default function App() {
     const cacheKey = `${performerId}_${shotType}`;
 
     setAppState(prev => {
-      const nextState = {
+      return {
         ...prev,
         aiEvaluations: { ...prev.aiEvaluations, [cacheKey]: clientEval }
       };
-      saveStateToFirestore(nextState).catch(() => {});
-      return nextState;
     });
+    saveAiEvaluationToFirestore(cacheKey, clientEval).catch(() => {});
 
     return clientEval;
   };

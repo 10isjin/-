@@ -167,6 +167,7 @@ export async function saveFeedbackToFirestore(feedback: FeedbackItem): Promise<b
 }
 
 // Update star reward state on a single feedback document (Strictly isolated doc write, 0 broadcast reads)
+// Update star reward state on a single feedback document and central state doc for instant real-time sync across all devices
 export async function rewardFeedbackInFirestore(
   feedbackId: string,
   favoriteRewarded: boolean,
@@ -184,9 +185,41 @@ export async function rewardFeedbackInFirestore(
     }
     await withTimeout(
       setDoc(ref, updateData, { merge: true }),
-      4000,
+      8000,
       undefined
     );
+
+    // Atomically sync the star update to central STATE_DOC_REF so ALL devices receive real-time star updates instantly!
+    withTimeout(
+      (async () => {
+        const snap = await getDoc(STATE_DOC_REF);
+        if (snap.exists()) {
+          const currentFeedbacks = snap.data().feedbacks;
+          if (Array.isArray(currentFeedbacks)) {
+            let changed = false;
+            const nextFeedbacks = currentFeedbacks.map((f: FeedbackItem) => {
+              if (f.id === feedbackId) {
+                changed = true;
+                return {
+                  ...f,
+                  favoriteRewarded,
+                  favoriteRewardedAt: favoriteRewarded ? (favoriteRewardedAt || Date.now()) : undefined,
+                  updatedAt: Date.now()
+                };
+              }
+              return f;
+            });
+            if (changed) {
+              const cleanNext = JSON.parse(JSON.stringify(nextFeedbacks));
+              await setDoc(STATE_DOC_REF, { feedbacks: cleanNext, updatedAt: Date.now() }, { merge: true });
+            }
+          }
+        }
+      })(),
+      8000,
+      undefined
+    ).catch(() => {});
+
     return true;
   } catch (err) {
     handleFirestoreError(err, "rewardFeedback");
@@ -194,30 +227,18 @@ export async function rewardFeedbackInFirestore(
   }
 }
 
-// Fetch all feedbacks - optimized to check central STATE_DOC_REF first (1 read instead of 300 reads!)
+// Fetch all feedbacks directly from authoritative isolated FEEDBACKS_COLLECTION
 export async function fetchFeedbacksFromFirestore(): Promise<FeedbackItem[]> {
   if (isQuotaExhausted()) return [];
   try {
-    const snap = await withTimeout(getDoc(STATE_DOC_REF), 4000, null as any);
-    if (snap && snap.exists && snap.exists()) {
-      const data = snap.data();
-      if (Array.isArray(data.feedbacks) && data.feedbacks.length > 0) {
-        return data.feedbacks as FeedbackItem[];
-      }
-    }
-  } catch (err) {
-    handleFirestoreError(err, "fetchFeedbacksStateDoc");
-  }
-
-  // Fallback to collection only if state doc is empty
-  try {
-    const snap = await withTimeout(getDocs(FEEDBACKS_COLLECTION), 4000, null as any);
+    const snap = await withTimeout(getDocs(FEEDBACKS_COLLECTION), 8000, null as any);
     if (!snap) return [];
     const list: FeedbackItem[] = [];
     snap.forEach((d: any) => {
       const item = d.data() as FeedbackItem;
       if (item && item.id) list.push(item);
     });
+    list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     return list;
   } catch (err) {
     handleFirestoreError(err, "fetchFeedbacksCollection");
@@ -230,7 +251,7 @@ export async function fetchFeedbacksFromFirestore(): Promise<FeedbackItem[]> {
 export function subscribeToFeedbacksCollection(callback: (feedbacks: FeedbackItem[]) => void): () => void {
   if (isQuotaExhausted()) return () => {};
   try {
-    const q = query(FEEDBACKS_COLLECTION, orderBy('timestamp', 'desc'), limit(60));
+    const q = query(FEEDBACKS_COLLECTION, orderBy('updatedAt', 'desc'), limit(300));
     return onSnapshot(
       q,
       (snap) => {
@@ -321,7 +342,6 @@ export async function deleteFeedbackFromFirestore(feedbackId: string): Promise<b
   }
 }
 
-// Clear feedbacks in batch from Firestore (Teacher Mode reset)
 export async function clearFeedbacksInFirestore(filter?: {
   classId?: string;
   shotType?: string;
@@ -330,10 +350,10 @@ export async function clearFeedbacksInFirestore(filter?: {
 }): Promise<number> {
   if (isQuotaExhausted()) return 0;
   try {
-    const snap = await withTimeout(getDocs(FEEDBACKS_COLLECTION), 4000, null as any);
+    const snap = await withTimeout(getDocs(FEEDBACKS_COLLECTION), 8000, null as any);
     if (!snap) return 0;
-    const batch = writeBatch(db);
-    let count = 0;
+    
+    const matchingRefs: any[] = [];
     snap.forEach((docSnap: any) => {
       const data = docSnap.data() as FeedbackItem;
       let matches = true;
@@ -344,16 +364,22 @@ export async function clearFeedbacksInFirestore(filter?: {
         if (filter.session && filter.session !== 'all' && (data.session || 1) !== filter.session) matches = false;
       }
       if (matches) {
-        batch.delete(docSnap.ref);
-        count++;
+        matchingRefs.push(docSnap.ref);
       }
     });
-    if (count > 0 || !filter || filter.classId === 'all') {
-      await withTimeout(batch.commit(), 4000, false as any);
-      // Ensure STATE_DOC_REF also syncs empty feedbacks
-      await withTimeout(setDoc(STATE_DOC_REF, { feedbacks: [] }, { merge: true }), 3000, false as any);
+
+    // Chunk into batches of 400 to respect Firestore 500-op per batch hard limit
+    for (let i = 0; i < matchingRefs.length; i += 400) {
+      const chunk = matchingRefs.slice(i, i + 400);
+      const batch = writeBatch(db);
+      chunk.forEach(ref => batch.delete(ref));
+      await withTimeout(batch.commit(), 8000, false as any);
     }
-    return count;
+
+    if (matchingRefs.length > 0 || !filter || filter.classId === 'all') {
+      await withTimeout(setDoc(STATE_DOC_REF, { feedbacks: [] }, { merge: true }), 4000, false as any);
+    }
+    return matchingRefs.length;
   } catch (err) {
     handleFirestoreError(err, "clearFeedbacks");
     return 0;
@@ -382,21 +408,33 @@ export async function saveStudentAnswerToFirestore(answer: any): Promise<boolean
     if (!answer || !answer.classId || !answer.studentId || !answer.answer) return false;
     const session = answer.session || 1;
     const canonicalKey = `${answer.classId}_${answer.studentId}_s${session}`;
-    const cleanAnswer = {
+    const cleanAnswer = JSON.parse(JSON.stringify({
       ...answer,
       id: `ans_${canonicalKey}`,
       session,
       updatedAt: answer.updatedAt || Date.now()
-    };
+    }));
     
-    // Direct isolated doc write to /student_answers/{canonicalKey}
-    // Completely eliminates central state doc write contention!
-    const ok = await withTimeout(
-      setDoc(doc(db, "student_answers", canonicalKey), cleanAnswer, { merge: true }).then(() => true),
-      4000,
-      false
+    // 1. Direct isolated doc write to /student_answers/{canonicalKey}
+    await withTimeout(
+      setDoc(doc(db, "student_answers", canonicalKey), cleanAnswer, { merge: true }),
+      8000,
+      undefined
     );
-    return Boolean(ok);
+
+    // 2. Also write to central STATE_DOC_REF so ALL students and teacher devices receive the answer instantly in real-time!
+    withTimeout(
+      setDoc(STATE_DOC_REF, {
+        studentAnswers: {
+          [canonicalKey]: cleanAnswer
+        },
+        updatedAt: Date.now()
+      }, { merge: true }),
+      8000,
+      undefined
+    ).catch(() => {});
+
+    return true;
   } catch (err) {
     handleFirestoreError(err, "saveStudentAnswer");
     return false;
@@ -510,12 +548,31 @@ export async function saveStateToFirestore(
 
     const ok = await withTimeout(
       setDoc(STATE_DOC_REF, cleanPayload, { merge: true }).then(() => true),
-      4000,
+      8000,
       false
     );
     return Boolean(ok);
   } catch (err) {
     handleFirestoreError(err, "saveState");
+    return false;
+  }
+}
+
+// Atomic save for individual AI Evaluation to eliminate document overwrite collisions
+export async function saveAiEvaluationToFirestore(cacheKey: string, evalData: any): Promise<boolean> {
+  if (isQuotaExhausted()) return false;
+  try {
+    const ok = await withTimeout(
+      setDoc(STATE_DOC_REF, {
+        [`aiEvaluations.${cacheKey}`]: JSON.parse(JSON.stringify(evalData)),
+        updatedAt: Date.now()
+      }, { merge: true }).then(() => true),
+      8000,
+      false
+    );
+    return Boolean(ok);
+  } catch (err) {
+    handleFirestoreError(err, "saveAiEvaluation");
     return false;
   }
 }
