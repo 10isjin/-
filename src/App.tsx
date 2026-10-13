@@ -1724,11 +1724,14 @@ export default function App() {
         if (res.ok) serverSuccess = true;
       } catch {}
 
+      // 3. Immediately pull latest authoritative cloud state so this device is 100% up to date with all devices
+      await fetchState();
+
       if (cloudSuccess || serverSuccess) {
         return {
           success: true,
           count: mergedList.length,
-          message: `총 ${mergedList.length}건의 피드백이 클라우드와 완벽하게 동기화되었습니다! 모든 학생 및 PC에서 실시간으로 확인하실 수 있습니다.`
+          message: `총 ${mergedList.length}건의 피드백이 클라우드와 완벽하게 동기화되었습니다!\n이제 모든 학생 및 교사 PC에서 실시간으로 동일하게 확인하실 수 있습니다.`
         };
       } else {
         return {

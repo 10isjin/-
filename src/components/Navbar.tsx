@@ -103,8 +103,8 @@ export const Navbar: React.FC<Props> = ({
 
         {/* Right action controls */}
         <div className="flex items-center gap-2">
-          {/* Cloud Sync Button - Available on Home, Teacher, and Overview modes, hidden in Student modes (performer/observer) */}
-          {onSyncCloud && currentMode !== 'performer' && currentMode !== 'observer' && (
+          {/* Cloud Sync Button - Exclusively visible to Teacher Mode */}
+          {onSyncCloud && currentMode === 'teacher' && (
             <button
               type="button"
               onClick={onSyncCloud}

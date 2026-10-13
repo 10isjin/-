@@ -99,21 +99,6 @@ export const ModeSelection: React.FC<Props> = ({
             <Trophy className="w-4 h-4 text-amber-400" />
             <span>누적 피드백: <strong className="text-white font-bold">{totalFeedbacks}건</strong></span>
           </div>
-          {onSyncCloud && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSyncCloud();
-              }}
-              disabled={isSyncingCloud}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-500/15 border border-sky-500/40 text-sky-300 hover:bg-sky-500/25 font-bold text-[11px] transition-all cursor-pointer shadow-sm active:scale-95 disabled:opacity-50"
-              title="현재 기기 피드백을 클라우드 및 서버와 즉시 동기화합니다"
-            >
-              <Cloud className={`w-3.5 h-3.5 text-sky-400 ${isSyncingCloud ? 'animate-bounce' : ''}`} />
-              <span>{isSyncingCloud ? '동기화 중...' : '클라우드 즉시 동기화 실행'}</span>
-            </button>
-          )}
         </div>
       </div>
 
